@@ -1,0 +1,6 @@
+{
+  "name": "BUG SNIPER - Java Debugging CTF",
+  "description": "Enterprise foundation and immutable competition rules for BUG SNIPER, a 60-minute Java Debugging Capture The Flag symposium competition.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

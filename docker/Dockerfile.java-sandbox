@@ -1,0 +1,18 @@
+# =============================================================================
+# BUG RIP: Untrusted Java Execution Sandbox Container
+# Minimal, hardened OpenJDK 21 LTS runtime with unprivileged user
+# =============================================================================
+FROM eclipse-temurin:21-jdk-alpine
+
+# Create non-root runner user
+RUN addgroup -g 10001 sandbox && \
+    adduser -u 10001 -G sandbox -s /bin/sh -D sandbox
+
+# Ephemeral workspace directory
+WORKDIR /workspace
+RUN chown -R sandbox:sandbox /workspace
+
+USER sandbox
+
+# Default entrypoint for compilation and execution
+CMD ["sh", "-c", "javac Main.java && java -Xmx192m -Xms32m Main"]

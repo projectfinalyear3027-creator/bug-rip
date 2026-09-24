@@ -1,0 +1,73 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "BugRipChallengeDefinition",
+  "type": "object",
+  "required": [
+    "id",
+    "title",
+    "difficulty",
+    "points",
+    "orderIndex",
+    "description",
+    "starterCode",
+    "flagHash",
+    "validationSuite"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^(EASY|MEDIUM|HARD|EXTREME)-[0-9]{2}-[A-Z0-9_]+$"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 120
+    },
+    "difficulty": {
+      "type": "string",
+      "enum": ["EASY", "MEDIUM", "HARD", "EXTREME"]
+    },
+    "points": {
+      "type": "integer",
+      "minimum": 5,
+      "maximum": 500
+    },
+    "orderIndex": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "description": {
+      "type": "string"
+    },
+    "starterCode": {
+      "type": "string"
+    },
+    "flagHash": {
+      "type": "string",
+      "description": "SHA-256 hex digest of valid flag string (format DBG{...})"
+    },
+    "flagFormat": {
+      "type": "string",
+      "default": "DBG{[A-Z0-9_]+}"
+    },
+    "validationSuite": {
+      "type": "object",
+      "required": ["className", "testCases"],
+      "properties": {
+        "className": { "type": "string" },
+        "testCases": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["input", "expectedOutput"],
+            "properties": {
+              "input": { "type": "string" },
+              "expectedOutput": { "type": "string" },
+              "isHidden": { "type": "boolean", "default": false }
+            }
+          }
+        }
+      }
+    }
+  }
+}
