@@ -86,6 +86,33 @@ async function runJavaEnvironmentTests() {
   assert(sandboxProbe.status === 0, 'unshare + setpriv probe executed with status 0');
   assert(sandboxProbe.stdout.includes(`uid=${jdk.sandboxConfig.uid}`), `Sandbox probe confirms execution under UID ${jdk.sandboxConfig.uid}`);
 
+  // Regression test: Chowned sandbox workspace (0711) traversal for cwd establishment
+  const testWorkspace = `/tmp/sandboxes/test-probe-${Date.now()}`;
+  fs.mkdirSync(testWorkspace, { recursive: true, mode: 0o711 });
+  fs.chmodSync(testWorkspace, 0o711);
+  fs.chownSync(testWorkspace, jdk.sandboxConfig.uid, jdk.sandboxConfig.gid);
+
+  // 1. Verify filesystem state after preparation
+  assert(fs.existsSync(testWorkspace), 'testWorkspace exists');
+  const stat = fs.statSync(testWorkspace);
+  assert(stat.uid === jdk.sandboxConfig.uid, `owner UID is SANDBOX_UID (expected: ${jdk.sandboxConfig.uid}, got: ${stat.uid})`);
+  assert(stat.gid === jdk.sandboxConfig.gid, `group GID is SANDBOX_GID (expected: ${jdk.sandboxConfig.gid}, got: ${stat.gid})`);
+  assert((stat.mode & 0o777) === 0o711, `permissions are exactly 0711 (got: 0${(stat.mode & 0o777).toString(8)})`);
+
+  // 2. Verify child process can establish cwd successfully and runs as sandbox UID/GID
+  const chdirProbe = spawnSync('unshare', [
+    '-n', '-p', '-f', '--mount-proc',
+    'setpriv', '--reuid', String(jdk.sandboxConfig.uid), '--regid', String(jdk.sandboxConfig.gid), '--clear-groups', '--no-new-privs',
+    'sh', '-c', 'echo "CWD=$(pwd)"; id'
+  ], { encoding: 'utf8', cwd: testWorkspace });
+
+  assert(chdirProbe.status === 0, `Worker can traverse and launch child with cwd in chowned 0711 workspace (exit: ${chdirProbe.status})`);
+  assert(chdirProbe.stdout.includes(`CWD=${testWorkspace}`), 'the child process can establish cwd successfully');
+  assert(chdirProbe.stdout.includes(`uid=${jdk.sandboxConfig.uid}`), `child runs through unshare + setpriv as sandbox UID ${jdk.sandboxConfig.uid}`);
+  assert(chdirProbe.stdout.includes(`gid=${jdk.sandboxConfig.gid}`), `child runs through unshare + setpriv as sandbox GID ${jdk.sandboxConfig.gid}`);
+
+  fs.rmSync(testWorkspace, { recursive: true, force: true });
+
   // ----------------------------------------------------------------
   // [Suite 3] Trivial Java Program Execution (User Request Specification)
   // ----------------------------------------------------------------

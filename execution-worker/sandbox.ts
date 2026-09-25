@@ -2,7 +2,7 @@
  * BUG RIP - Isolated Java Sandbox Runner (Fragment 8)
  * 
  * Provides hardened, isolated compilation and execution of untrusted participant Java code:
- * - Ephemeral workspace per job in /tmp/sandboxes/exec-<UUID> (0700 permissions)
+ * - Ephemeral workspace per job in /tmp/sandboxes/exec-<UUID> (0711 permissions)
  * - Automatic guaranteed workspace cleanup in finally block
  * - Stripped, minimal environment (PATH, JAVA_HOME, LANG=C.UTF-8 only; NO application secrets)
  * - Linux network namespace isolation (unshare -n) blocking all LAN/WAN and loopback access
@@ -158,9 +158,9 @@ export class IsolatedJavaSandbox {
 
     const uniqueId = `exec-${crypto.randomUUID()}`;
     const workspaceDir = path.join(this.sandboxBaseDir, uniqueId);
-    fs.mkdirSync(workspaceDir, { recursive: true, mode: 0o700 });
+    fs.mkdirSync(workspaceDir, { recursive: true, mode: 0o711 });
     try {
-      fs.chmodSync(workspaceDir, 0o700);
+      fs.chmodSync(workspaceDir, 0o711);
     } catch {}
 
     const sourceFilePath = path.join(workspaceDir, `${mainClassName}.java`);
