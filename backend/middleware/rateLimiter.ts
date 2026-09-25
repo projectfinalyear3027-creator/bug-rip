@@ -109,3 +109,110 @@ export function resetAdminLoginRateLimiter() {
   adminLoginAttempts.clear();
 }
 
+// -----------------------------------------------------------------------------
+// Execution Rate Limiter: Max 30 runs per minute per IP/Session
+// Prevents sandbox queue starvation while allowing continuous rapid debugging.
+// -----------------------------------------------------------------------------
+const executionAttempts = new Map<string, AttemptRecord>();
+const EXEC_WINDOW_MS = 60 * 1000;
+const EXEC_MAX_ATTEMPTS = 30;
+
+export function executionRateLimiter(req: Request, res: Response, next: NextFunction) {
+  const key = req.sessionRecord?.id || (req.ip || req.socket.remoteAddress || 'unknown').toString();
+  const now = Date.now();
+  const record = executionAttempts.get(key);
+
+  if (record) {
+    if (now - record.firstAttemptAt > EXEC_WINDOW_MS) {
+      executionAttempts.set(key, { count: 1, firstAttemptAt: now });
+      return next();
+    }
+    record.count++;
+    if (record.count > EXEC_MAX_ATTEMPTS) {
+      return res.status(429).json({
+        success: false,
+        error: 'Execution rate limit exceeded. Please wait a few seconds before submitting code again.',
+        code: 'EXECUTION_RATE_LIMITED',
+      });
+    }
+  } else {
+    executionAttempts.set(key, { count: 1, firstAttemptAt: now });
+  }
+
+  next();
+}
+
+// -----------------------------------------------------------------------------
+// Flag Submission Rate Limiter: Max 15 attempts per minute per IP/Session
+// Prevents automated brute-force flag enumeration.
+// -----------------------------------------------------------------------------
+const flagAttempts = new Map<string, AttemptRecord>();
+const FLAG_WINDOW_MS = 60 * 1000;
+const FLAG_MAX_ATTEMPTS = 15;
+
+export function flagSubmissionRateLimiter(req: Request, res: Response, next: NextFunction) {
+  const key = req.sessionRecord?.id || (req.ip || req.socket.remoteAddress || 'unknown').toString();
+  const now = Date.now();
+  const record = flagAttempts.get(key);
+
+  if (record) {
+    if (now - record.firstAttemptAt > FLAG_WINDOW_MS) {
+      flagAttempts.set(key, { count: 1, firstAttemptAt: now });
+      return next();
+    }
+    record.count++;
+    if (record.count > FLAG_MAX_ATTEMPTS) {
+      return res.status(429).json({
+        success: false,
+        error: 'Too many flag submission attempts. Please slow down and inspect your program output.',
+        code: 'FLAG_RATE_LIMITED',
+      });
+    }
+  } else {
+    flagAttempts.set(key, { count: 1, firstAttemptAt: now });
+  }
+
+  next();
+}
+
+// -----------------------------------------------------------------------------
+// Anti-Cheat Ingestion Rate Limiter: Max 60 events per minute per IP/Session
+// Prevents telemetry flooding.
+// -----------------------------------------------------------------------------
+const antiCheatAttempts = new Map<string, AttemptRecord>();
+const AC_WINDOW_MS = 60 * 1000;
+const AC_MAX_ATTEMPTS = 60;
+
+export function antiCheatRateLimiter(req: Request, res: Response, next: NextFunction) {
+  const key = req.sessionRecord?.id || (req.ip || req.socket.remoteAddress || 'unknown').toString();
+  const now = Date.now();
+  const record = antiCheatAttempts.get(key);
+
+  if (record) {
+    if (now - record.firstAttemptAt > AC_WINDOW_MS) {
+      antiCheatAttempts.set(key, { count: 1, firstAttemptAt: now });
+      return next();
+    }
+    record.count++;
+    if (record.count > AC_MAX_ATTEMPTS) {
+      return res.status(429).json({
+        success: false,
+        error: 'Anti-cheat event ingestion rate limit exceeded.',
+        code: 'ANTI_CHEAT_RATE_LIMITED',
+      });
+    }
+  } else {
+    antiCheatAttempts.set(key, { count: 1, firstAttemptAt: now });
+  }
+
+  next();
+}
+
+export function resetAllRateLimiters() {
+  loginAttempts.clear();
+  adminLoginAttempts.clear();
+  executionAttempts.clear();
+  flagAttempts.clear();
+  antiCheatAttempts.clear();
+}
+

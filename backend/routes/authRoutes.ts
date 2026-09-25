@@ -147,10 +147,11 @@ async function handleParticipantLogin(req: Request, res: Response, next: NextFun
 
     // 5. Set secure HTTP-only cookie
     const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https';
+    const isProduction = process.env.NODE_ENV === 'production';
     res.cookie('bugrip_session', rawToken, {
       httpOnly: true,
-      secure: isHttps,
-      sameSite: isHttps ? 'none' : 'lax',
+      secure: isProduction || isHttps,
+      sameSite: isProduction ? 'lax' : (isHttps ? 'none' : 'lax'),
       maxAge: 8 * 60 * 60 * 1000,
       path: '/',
     });

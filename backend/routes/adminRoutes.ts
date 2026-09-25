@@ -22,14 +22,12 @@ export const adminRouter = Router();
  * Helper to set secure HTTP-only admin cookie
  */
 function setAdminSessionCookie(req: Request, res: Response, token: string) {
-  // Dynamically determine HTTPS vs HTTP:
-  // - On HTTPS (or behind Cloud Run / reverse proxy with x-forwarded-proto: https): secure=true, sameSite='none'
-  // - On local HTTP (e.g. http://localhost:3000): secure=false, sameSite='lax' so browsers do not reject it
   const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https';
+  const isProduction = process.env.NODE_ENV === 'production';
   res.cookie('bugrip_admin_session', token, {
     httpOnly: true,
-    secure: isHttps,
-    sameSite: isHttps ? 'none' : 'lax',
+    secure: isProduction || isHttps,
+    sameSite: isProduction ? 'lax' : (isHttps ? 'none' : 'lax'),
     path: '/',
     maxAge: 8 * 60 * 60 * 1000, // 8 hours
   });

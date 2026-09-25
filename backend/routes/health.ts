@@ -17,11 +17,24 @@ import { teamRepository } from '../repositories/teamRepository.ts';
 import { challengeRepository } from '../repositories/challengeRepository.ts';
 import { adminRepository } from '../repositories/adminRepository.ts';
 import { eventService } from '../services/eventService.ts';
+import { resolveJdkEnvironment } from '../../execution-worker/jdkEnvironment.ts';
+import { executionQueue } from '../../execution-worker/queue.ts';
 
 export const healthRouter = Router();
 
 // Startup timestamp for uptime calculation
 const startTime = Date.now();
+
+// Server readiness tracking for production probes
+let isServerReady = false;
+
+export function setServerReady(ready: boolean = true): void {
+  isServerReady = ready;
+}
+
+export function getServerReady(): boolean {
+  return isServerReady;
+}
 
 // Server-authoritative event state manager
 let currentEventState: EventState = EventState.NOT_STARTED;
@@ -38,6 +51,74 @@ export function setEventState(state: EventState, startTimeMs?: number): void {
     competitionStartTime = startTimeMs;
   }
 }
+
+/**
+ * Authoritative Readiness Probe Handler
+ * Serves /ready, /health/ready, /api/ready, /api/health/ready
+ * Distinguishes: initializing, ready, degraded, failed
+ * Does not report READY while Java execution is unavailable.
+ */
+export async function handleReadinessProbe(_req: Request, res: Response) {
+  const dbHealth = await checkDatabaseHealth();
+  const jdkInfo = resolveJdkEnvironment();
+  const isProd = process.env.NODE_ENV === 'production';
+  const javaAvailable = Boolean(jdkInfo.isAvailable && (!isProd || jdkInfo.isJdk21));
+  const queueHealth = await executionQueue.checkHealth();
+  const queueAvailable = queueHealth.available && (!isProd || queueHealth.mode === 'redis');
+
+  let status: 'ready' | 'initializing' | 'degraded' | 'failed';
+  let httpStatus = 503;
+
+  if (!dbHealth.connected) {
+    status = 'failed';
+  } else if (!isServerReady) {
+    status = 'initializing';
+  } else if (!javaAvailable || !queueAvailable) {
+    status = 'degraded';
+  } else {
+    status = 'ready';
+    httpStatus = 200;
+  }
+
+  const isReady = status === 'ready';
+
+  return res.status(httpStatus).json({
+    ready: isReady,
+    status,
+    services: {
+      api: 'healthy',
+      database: dbHealth.connected ? 'healthy' : 'failed',
+      java: javaAvailable ? 'ready' : 'unavailable',
+      queue: queueAvailable ? 'ready' : 'failed',
+      worker: isServerReady && javaAvailable ? 'ready' : 'not_ready',
+    },
+    details: {
+      databaseEngine: dbHealth.engine,
+      databaseMode: dbHealth.mode,
+      queueMode: queueHealth.mode,
+      javaVersion: jdkInfo.javaVersion,
+      isJdk21: jdkInfo.isJdk21,
+    },
+    ...(isReady
+      ? {}
+      : {
+          error: !dbHealth.connected
+            ? dbHealth.error || 'Database connection unavailable'
+            : !javaAvailable
+            ? 'Java execution sandbox is unavailable'
+            : !queueAvailable
+            ? 'Redis queue is unavailable in production'
+            : 'Server is still initializing',
+        }),
+  });
+}
+
+/**
+ * GET /api/ready
+ * GET /api/health/ready
+ * Kubernetes/VM readiness probe.
+ */
+healthRouter.get(['/ready', '/health/ready'], handleReadinessProbe);
 
 /**
  * GET /api/health
@@ -57,9 +138,11 @@ healthRouter.get('/health', async (_req: Request, res: Response) => {
     timestamp: new Date().toISOString(),
     uptimeSeconds: Math.floor((Date.now() - startTime) / 1000),
     environment: config.server.nodeEnv,
+    ready: isServerReady,
     services: {
       api: 'healthy',
       database: dbHealth.connected ? 'healthy' : 'unhealthy',
+      readiness: isServerReady ? 'ready' : 'initializing',
       rulesEngine: 'healthy',
       configuration: 'loaded',
     },
@@ -101,7 +184,7 @@ healthRouter.get('/competition/health/db', async (_req: Request, res: Response) 
       },
       schema: {
         canonicalRanking: 'Problems Solved DESC -> Total Score DESC -> Earliest Solve Timestamp ASC',
-        teamUnitConstraint: '1-2 members per team unit',
+        competitionFormat: 'Solo individual competition (1 participant unit)',
         secretCodeSource: 'CSV import only',
       },
     });

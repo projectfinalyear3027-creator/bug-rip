@@ -1,0 +1,43 @@
+[Unit]
+Description=BUG SNIPER - Dedicated Java Sandbox Execution Worker Daemon
+After=network.target redis.service postgresql.service
+Wants=redis.service postgresql.service
+
+[Service]
+Type=simple
+User=bugsniper-worker
+Group=bugsniper-worker
+WorkingDirectory=/opt/bugsniper
+
+# Secure production environment variables
+EnvironmentFile=/etc/bugsniper/bugsniper.env
+Environment=NODE_ENV=production
+
+# Node runtime execution - runs standalone compiled worker daemon without tsx
+ExecStart=/usr/bin/node dist/worker.cjs
+
+# Process Lifecycle & Recovery
+Restart=on-failure
+RestartSec=5
+KillMode=mixed
+TimeoutStopSec=30
+
+# Hardened Linux Sandbox Capabilities:
+# Only the minimal ambient capabilities strictly required for Linux namespace isolation (unshare)
+# and privilege dropping to UID 1001 sandbox user (setpriv)
+AmbientCapabilities=CAP_SYS_ADMIN CAP_SETUID CAP_SETGID
+CapabilityBoundingSet=CAP_SYS_ADMIN CAP_SETUID CAP_SETGID
+
+# Filesystem protections while preserving access to ephemeral sandboxes
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/bugsniper /tmp/sandboxes /var/log/bugsniper
+# PrivateTmp must be false so the unprivileged UID 1001 sandbox user can execute inside /tmp/sandboxes
+PrivateTmp=false
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
+
+[Install]
+WantedBy=multi-user.target

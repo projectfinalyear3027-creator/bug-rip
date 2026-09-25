@@ -61,9 +61,10 @@ export function isTestExecution(): boolean {
  * Priority:
  * 1. DATABASE_URL present and non-empty -> EXTERNAL_POSTGRES
  * 2. SQL_HOST present and non-empty -> CLOUD_SQL
- * 3. Default (DATABASE_URL absent) -> EMBEDDED_PGLITE (zero-configuration embedded PostgreSQL)
+ * 3. Default (DATABASE_URL absent) -> EMBEDDED_PGLITE (zero-configuration embedded PostgreSQL for dev/test)
  */
 export function getActiveDatabaseMode(): ActiveDatabaseInfo {
+  const isProduction = process.env.NODE_ENV === 'production';
   const databaseUrl = process.env.DATABASE_URL?.trim();
   const sqlHost = process.env.SQL_HOST?.trim();
 
@@ -83,6 +84,15 @@ export function getActiveDatabaseMode(): ActiveDatabaseInfo {
       isEmbedded: false,
       databaseUrlConfigured: false,
     };
+  }
+
+  // Production security & integrity requirement:
+  // When NODE_ENV=production, external PostgreSQL is strictly mandatory.
+  // Silently falling back to PGlite in production is forbidden.
+  if (isProduction && !isTestExecution()) {
+    throw new Error(
+      'CRITICAL CONFIGURATION ERROR: DATABASE_URL is mandatory in production (NODE_ENV=production). Embedded PGlite fallback is disabled in production.'
+    );
   }
 
   const isTest = isTestExecution();
@@ -226,11 +236,18 @@ export const db: any = new Proxy(
  */
 export async function closeDatabase(): Promise<void> {
   if (global._bugripPgPool) {
-    await global._bugripPgPool.end();
+    try {
+      await global._bugripPgPool.end();
+    } catch {}
     global._bugripPgPool = undefined;
   }
   if (global._bugripPglite) {
-    await global._bugripPglite.close();
+    try {
+      await Promise.race([
+        global._bugripPglite.close(),
+        new Promise((resolve) => setTimeout(resolve, 500)),
+      ]);
+    } catch {}
     global._bugripPglite = undefined;
   }
   global._bugripDrizzleDb = undefined;
@@ -250,10 +267,27 @@ export async function checkDatabaseHealth(): Promise<{
   error?: string;
 }> {
   const start = Date.now();
-  const dbInfo = getActiveDatabaseMode();
+  let dbInfo: ActiveDatabaseInfo;
+  try {
+    dbInfo = getActiveDatabaseMode();
+  } catch (err: any) {
+    return {
+      connected: false,
+      mode: 'EXTERNAL_POSTGRES',
+      engine: 'PostgreSQL (Unconfigured)',
+      isEmbedded: false,
+      databaseUrlConfigured: false,
+      error: err?.message || 'Database configuration error',
+    };
+  }
 
   try {
-    if (global._bugripPgPool) {
+    // 1. External PostgreSQL / Cloud SQL handling
+    if (dbInfo.mode === 'EXTERNAL_POSTGRES' || dbInfo.mode === 'CLOUD_SQL') {
+      getOrCreateDatabase();
+      if (!global._bugripPgPool) {
+        throw new Error('PostgreSQL connection pool failed to initialize.');
+      }
       const client = await global._bugripPgPool.connect();
       try {
         await client.query('SELECT 1 as health_check;');
@@ -270,6 +304,7 @@ export async function checkDatabaseHealth(): Promise<{
       }
     }
 
+    // 2. Embedded PGlite handling (Development and test environments only)
     if (global._bugripPglite) {
       try {
         await global._bugripPglite.query('SELECT 1 as health_check;');
@@ -292,7 +327,7 @@ export async function checkDatabaseHealth(): Promise<{
         const dataDir = process.env.DATA_DIR?.trim() || dbInfo.persistencePath || path.join(process.cwd(), 'data', 'postgres');
         const isTest = isTestExecution();
 
-        // 1. Soft recovery: clean stale postmaster.pid
+        // Soft recovery: clean stale postmaster.pid
         if (!isTest && dataDir && dataDir !== 'memory' && fs.existsSync(dataDir)) {
           const pid = path.join(dataDir, 'postmaster.pid');
           if (fs.existsSync(pid)) {
@@ -316,10 +351,10 @@ export async function checkDatabaseHealth(): Promise<{
             };
           }
         } catch (softErr: any) {
-          console.warn('Soft recovery failed, storage corrupted. Executing deep storage wipe and restore:', softErr?.message);
+          console.warn('Soft recovery failed, storage corrupted:', softErr?.message);
         }
 
-        // 2. Deep recovery: storage is corrupted or locked by terminated processes
+        // Deep recovery in development only
         if (!softRecovered && !isTest && dataDir && dataDir !== 'memory') {
           try {
             await global._bugripPglite?.close();
@@ -361,39 +396,20 @@ export async function checkDatabaseHealth(): Promise<{
       }
     }
 
-    // Fallback initialize
+    // Default initialization for development PGlite
     getOrCreateDatabase();
     if (global._bugripPglite) {
-      try {
-        await global._bugripPglite.query('SELECT 1 as health_check;');
-      } catch (fallbackQueryErr: any) {
-        console.warn('Fallback PGlite check encountered an error:', fallbackQueryErr?.message);
-        // Attempt deep recovery
-        const dataDir = process.env.DATA_DIR?.trim() || dbInfo.persistencePath || path.join(process.cwd(), 'data', 'postgres');
-        const isTest = isTestExecution();
-        if (!isTest && dataDir && dataDir !== 'memory') {
-          try { await global._bugripPglite?.close(); } catch {}
-          global._bugripPglite = undefined;
-          global._bugripDrizzleDb = undefined;
-          if (fs.existsSync(dataDir)) {
-            try {
-              fs.rmSync(dataDir, { recursive: true, force: true });
-              fs.mkdirSync(dataDir, { recursive: true });
-            } catch {}
-          }
-          getOrCreateDatabase();
-          if (global._bugripPglite) {
-            try {
-              const { runMigrations } = await import('../../database/migrator.ts');
-              const { runSeed } = await import('../../database/seed.ts');
-              await runMigrations();
-              await runSeed({ includeDemoParticipants: false });
-            } catch {}
-            await global._bugripPglite.query('SELECT 1 as health_check;');
-          }
-        }
-      }
+      await global._bugripPglite.query('SELECT 1 as health_check;');
+      return {
+        connected: true,
+        mode: dbInfo.mode,
+        engine: dbInfo.engine,
+        isEmbedded: dbInfo.isEmbedded,
+        databaseUrlConfigured: dbInfo.databaseUrlConfigured,
+        latencyMs: Date.now() - start,
+      };
     }
+
     return {
       connected: true,
       mode: dbInfo.mode,
@@ -403,7 +419,7 @@ export async function checkDatabaseHealth(): Promise<{
       latencyMs: Date.now() - start,
     };
   } catch (err: any) {
-    console.error('checkDatabaseHealth error:', err);
+    console.error('checkDatabaseHealth error:', err?.message || err);
     return {
       connected: false,
       mode: dbInfo.mode,
@@ -419,34 +435,39 @@ export async function checkDatabaseHealth(): Promise<{
  * Execute raw SQL query safely across drivers
  */
 export async function executeRawSql(sql: string, params: any[] = []): Promise<any> {
+  const dbInfo = getActiveDatabaseMode();
+  getOrCreateDatabase();
+
   try {
-    if (global._bugripPgPool) {
+    if (dbInfo.mode === 'EXTERNAL_POSTGRES' || dbInfo.mode === 'CLOUD_SQL') {
+      if (!global._bugripPgPool) {
+        throw new Error('PostgreSQL connection pool not initialized.');
+      }
       const res = await global._bugripPgPool.query(sql, params);
       return res.rows;
     }
+
     if (global._bugripPglite) {
       if (params.length === 0) {
-        await global._bugripPglite.exec(sql);
-        return [];
+        const trimmed = sql.trim();
+        const isSelect = trimmed.startsWith('SELECT') || trimmed.startsWith('select');
+        if (isSelect) {
+          const res = await global._bugripPglite.query(sql);
+          return res.rows;
+        } else {
+          const res = await global._bugripPglite.exec(sql);
+          return res?.[0]?.rows || [];
+        }
       } else {
         const res = await global._bugripPglite.query(sql, params);
         return res.rows;
       }
     }
-    getOrCreateDatabase();
-    if (global._bugripPglite) {
-      if (params.length === 0) {
-        await global._bugripPglite.exec(sql);
-        return [];
-      } else {
-        const res = await global._bugripPglite.query(sql, params);
-        return res.rows;
-      }
-    }
-    return [];
+
+    throw new Error('No active database engine available for SQL execution.');
   } catch (error: any) {
-    console.error('SQL execution failed:', error);
-    throw new Error('Database query execution error', { cause: error });
+    console.error('SQL execution failed:', error?.message || error);
+    throw new Error(`Database query execution error: ${error?.message || error}`, { cause: error });
   }
 }
 

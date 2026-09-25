@@ -63,8 +63,11 @@ function isExecutable(filePath: string): boolean {
 export function ensureSandboxUser(): boolean {
   try {
     const isRoot = process.getuid ? process.getuid() === 0 : false;
-    const passwd = fs.readFileSync('/etc/passwd', 'utf8');
-    const hasSandbox = passwd.includes('sandbox:') || fs.existsSync('/home/sandbox');
+    let passwd = '';
+    try {
+      passwd = fs.readFileSync('/etc/passwd', 'utf8');
+    } catch {}
+    const hasSandbox = passwd.includes('sandbox:') || passwd.includes(':1001:') || fs.existsSync('/home/sandbox');
     if (hasSandbox) return true;
 
     if (isRoot) {
@@ -77,6 +80,23 @@ export function ensureSandboxUser(): boolean {
     }
     return false;
   } catch {
+    return false;
+  }
+}
+
+/**
+ * Ensures the ephemeral sandbox directory /tmp/sandboxes exists with safe permissions
+ */
+export function ensureSandboxDirectory(): boolean {
+  try {
+    const dir = '/tmp/sandboxes';
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true, mode: 0o777 });
+    }
+    fs.accessSync(dir, fs.constants.R_OK | fs.constants.W_OK);
+    return true;
+  } catch (err) {
+    console.error('[ExecutionWorker] /tmp/sandboxes check failed:', err);
     return false;
   }
 }
@@ -240,10 +260,33 @@ export function resolveJdkEnvironment(forceRefresh = false): JdkEnvironmentInfo 
   // Check Linux network namespace isolation & setpriv
   let isolationAvailable = false;
   try {
-    const isRoot = process.getuid ? process.getuid() === 0 : false;
     const hasUnshare = fs.existsSync('/usr/bin/unshare') || fs.existsSync('/bin/unshare');
     const hasSetpriv = fs.existsSync('/usr/bin/setpriv') || fs.existsSync('/bin/setpriv');
-    isolationAvailable = isRoot && hasUnshare && hasSetpriv && sandboxUserExists;
+    if (hasUnshare && hasSetpriv && sandboxUserExists) {
+      try {
+        const probe = spawnSync(
+          'unshare',
+          [
+            '-n',
+            '-p',
+            '-f',
+            '--mount-proc',
+            'setpriv',
+            '--reuid',
+            '1001',
+            '--regid',
+            '1001',
+            '--clear-groups',
+            '--no-new-privs',
+            'true',
+          ],
+          { timeout: 2000 }
+        );
+        isolationAvailable = probe.status === 0;
+      } catch {
+        isolationAvailable = false;
+      }
+    }
   } catch {
     isolationAvailable = false;
   }
@@ -267,10 +310,12 @@ export function resolveJdkEnvironment(forceRefresh = false): JdkEnvironmentInfo 
 /**
  * Startup diagnostic check for the execution worker service.
  * Verifies environment health and logs clear status.
- * Throws an explicit error during startup if JDK is unavailable.
+ * Throws an explicit error during startup if JDK or Linux sandbox primitives are unavailable.
  */
 export function verifyExecutionEnvironmentOrThrow(): JdkEnvironmentInfo {
   const info = resolveJdkEnvironment(true);
+  const isProduction = process.env.NODE_ENV === 'production';
+  const hasSandboxDir = ensureSandboxDirectory();
 
   if (!info.isAvailable) {
     console.error('================================================================');
@@ -280,6 +325,27 @@ export function verifyExecutionEnvironmentOrThrow(): JdkEnvironmentInfo {
     throw new Error(info.error || 'JDK 21 execution environment is unavailable.');
   }
 
+  // Preflight security verification for production deployments
+  if (isProduction) {
+    if (!info.isJdk21) {
+      throw new Error(`CRITICAL SANDBOX PREFLIGHT ERROR: OpenJDK 21 LTS is mandatory in production (detected major version: ${info.majorVersion || 'unknown'}).`);
+    }
+    const hasUnshare = fs.existsSync('/usr/bin/unshare') || fs.existsSync('/bin/unshare');
+    if (!hasUnshare) {
+      throw new Error('CRITICAL SANDBOX PREFLIGHT ERROR: /usr/bin/unshare utility is missing. Linux network namespace isolation is mandatory.');
+    }
+    const hasSetpriv = fs.existsSync('/usr/bin/setpriv') || fs.existsSync('/bin/setpriv');
+    if (!hasSetpriv) {
+      throw new Error('CRITICAL SANDBOX PREFLIGHT ERROR: /usr/bin/setpriv utility is missing. Non-root unprivileged sandbox execution is mandatory.');
+    }
+    if (!info.sandboxUserExists) {
+      throw new Error('CRITICAL SANDBOX PREFLIGHT ERROR: Unprivileged sandbox user (UID 1001) does not exist in the system.');
+    }
+    if (!hasSandboxDir) {
+      throw new Error('CRITICAL SANDBOX PREFLIGHT ERROR: /tmp/sandboxes directory is inaccessible or cannot be created with safe permissions.');
+    }
+  }
+
   console.log('----------------------------------------------------------------');
   console.log('[ExecutionWorker] Java Execution Environment Verified:');
   console.log(`  • JAVA_HOME:        ${info.javaHome}`);
@@ -287,6 +353,7 @@ export function verifyExecutionEnvironmentOrThrow(): JdkEnvironmentInfo {
   console.log(`  • java runtime:     ${info.javaPath} (${info.javaVersion})`);
   console.log(`  • OpenJDK 21 LTS:   ${info.isJdk21 ? 'CONFIRMED' : 'WARNING (version: ' + info.majorVersion + ')'}`);
   console.log(`  • Sandbox Security: UID 1001 (sandbox: ${info.sandboxUserExists ? 'READY' : 'MISSING'}), unshare isolation: ${info.isolationAvailable ? 'ACTIVE' : 'FALLBACK'}`);
+  console.log(`  • Sandbox Dir:      /tmp/sandboxes (${hasSandboxDir ? 'READY' : 'ERROR'})`);
   console.log('----------------------------------------------------------------');
 
   return info;

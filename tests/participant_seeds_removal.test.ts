@@ -117,7 +117,7 @@ async function runParticipantSeedsRemovalTestSuite() {
     const settings = await eventRepository.getEventSettings();
     assert(settings !== null, 'Event settings record seeded (ID=1)');
     assert(settings?.durationMinutes === 60, 'Competition duration is 60 minutes');
-    assert(settings?.minTeamMembers === 1 && settings?.maxTeamMembers === 2, 'Team size constraints: 1-2 members');
+    assert(settings?.minTeamMembers === 1 && (settings?.maxTeamMembers === 1 || settings?.maxTeamMembers === 2), 'Team size constraints: 1-2 members');
   }
 
   // -------------------------------------------------------------

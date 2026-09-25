@@ -5,8 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs && esbuild execution-worker/standalone.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/worker.cjs",
     "start": "node dist/server.cjs",
+    "start:web": "node dist/server.cjs",
+    "start:worker": "node dist/worker.cjs",
     "test": "PG_MEM=true SEED_TEST_FIXTURES=true tsx tests/rules.test.ts && PG_MEM=true SEED_TEST_FIXTURES=true tsx tests/database.test.ts && PG_MEM=true SEED_TEST_FIXTURES=true tsx tests/auth_waiting.test.ts && PG_MEM=true SEED_TEST_FIXTURES=true tsx tests/admin.test.ts && PG_MEM=true SEED_TEST_FIXTURES=true tsx tests/timer.test.ts && PG_MEM=true SEED_TEST_FIXTURES=true tsx tests/progression.test.ts && PG_MEM=true SEED_TEST_FIXTURES=true tsx tests/arena.test.ts && PG_MEM=true SEED_TEST_FIXTURES=true tsx tests/execution.test.ts && PG_MEM=true SEED_TEST_FIXTURES=true tsx tests/security.test.ts && PG_MEM=true SEED_TEST_FIXTURES=true tsx tests/fragment9.test.ts && PG_MEM=true SEED_TEST_FIXTURES=true tsx tests/fragment10.test.ts && PG_MEM=true SEED_TEST_FIXTURES=true tsx tests/fragment11.test.ts && PG_MEM=true SEED_TEST_FIXTURES=true tsx tests/fragment12.test.ts && PG_MEM=true SEED_TEST_FIXTURES=true tsx tests/fragment13.test.ts && PG_MEM=true SEED_TEST_FIXTURES=true tsx tests/connection_status.test.ts && PG_MEM=true SEED_TEST_FIXTURES=true tsx tests/new_match.test.ts && PG_MEM=true SEED_TEST_FIXTURES=true tsx tests/java_environment.test.ts && PG_MEM=true tsx tests/participant_seeds_removal.test.ts && PG_MEM=true tsx tests/no_demo_data.test.ts && PG_MEM=true tsx tests/challenge_inventory.test.ts",
     "test:inventory": "PG_MEM=true tsx tests/challenge_inventory.test.ts",
     "test:rules": "PG_MEM=true tsx tests/rules.test.ts",
@@ -30,6 +32,7 @@
     "test:clean-db": "PG_MEM=true tsx tests/participant_seeds_removal.test.ts",
     "test:no-demo": "PG_MEM=true tsx tests/no_demo_data.test.ts",
     "test:removal": "PG_MEM=true tsx tests/participant_removal.test.ts",
+    "test:smoke-prod": "tsx tests/production_smoke_test.ts",
     "db:verify-clean": "tsx scripts/verify-registration-state.ts",
     "db:clean-demo": "tsx scripts/cleanup-demo-participants.ts",
     "lint": "tsc --noEmit"

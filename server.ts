@@ -2,7 +2,7 @@ import express from 'express';
 import path from 'path';
 import cookieParser from 'cookie-parser';
 import { createServer as createViteServer } from 'vite';
-import { healthRouter } from './backend/routes/health.ts';
+import { healthRouter, handleReadinessProbe, setServerReady } from './backend/routes/health.ts';
 import { authRouter } from './backend/routes/authRoutes.ts';
 import { teamRouter } from './backend/routes/teamRoutes.ts';
 import { leaderboardRouter } from './backend/routes/leaderboardRoutes.ts';
@@ -17,31 +17,145 @@ import { checkDatabaseHealth } from './src/db/index.ts';
 import { teamRepository } from './backend/repositories/teamRepository.ts';
 import { eventService } from './backend/services/eventService.ts';
 import { executionWorker } from './execution-worker/worker.ts';
+import { executionQueue } from './execution-worker/queue.ts';
+import { executionRateLimiter } from './backend/middleware/rateLimiter.ts';
 
 async function startServer() {
+  const isProduction = process.env.NODE_ENV === 'production';
+  const PORT = parseInt(process.env.PORT || '3000', 10);
+
+  console.log('----------------------------------------------------');
+  console.log(`BUG SNIPER: Starting Server [NODE_ENV=${process.env.NODE_ENV || 'development'}]`);
+  console.log('----------------------------------------------------');
+
+  // Production Readiness & Dependency Verification Sequence
+  try {
+    // 0. Production Secret Preflight Validation
+    if (isProduction) {
+      const adminSecret = process.env.ADMIN_SECRET_KEY?.trim();
+      if (!adminSecret) {
+        throw new Error('CRITICAL CONFIGURATION ERROR: ADMIN_SECRET_KEY is mandatory in production.');
+      }
+      if (
+        adminSecret === 'bugrip-superadmin-secret-2026' ||
+        adminSecret === 'admin' ||
+        adminSecret === 'secret' ||
+        adminSecret === 'changeme' ||
+        adminSecret === 'password' ||
+        adminSecret === '1234567890123456' ||
+        adminSecret.length < 16
+      ) {
+        throw new Error('CRITICAL SECURITY ERROR: ADMIN_SECRET_KEY in production must be a secure, non-default string of at least 16 characters.');
+      }
+    }
+
+    // 1. Verify Database Connection
+    console.log('[Bootstrap 1/4] Verifying database connection...');
+    const health = await checkDatabaseHealth();
+    if (!health.connected) {
+      throw new Error(`Database connection failed: ${health.error || 'Unable to connect to database'}`);
+    }
+    console.log(`✓ Active Database: ${health.engine} [Mode: ${health.mode}] (Configured: ${health.databaseUrlConfigured})`);
+
+    // 2. Database Migrations (Idempotent Ledger)
+    console.log('[Bootstrap 2/4] Executing database migrations...');
+    await runMigrations();
+    console.log('✓ Database migrations complete.');
+
+    // 3. Database Configuration Seed (Solo Competition, 45 Challenges, 0 Demo Participants)
+    console.log('[Bootstrap 3/4] Seeding core configuration (Solo rules & 45 challenges)...');
+    await runSeed({ includeDemoParticipants: false });
+    console.log('✓ Core configuration seed verified.');
+
+    // Verify registration state
+    const regCounts = await teamRepository.getRegistrationCounts();
+    console.log(`✓ Current Participants: ${regCounts.participants} registered.`);
+
+    // 4. Redis Queue & Java Execution Worker
+    console.log('[Bootstrap 4/4] Starting Java Execution Worker & Queue...');
+    const startInProcessWorker = process.env.START_IN_PROCESS_WORKER !== 'false';
+    if (startInProcessWorker) {
+      await executionWorker.start();
+      console.log(`✓ Java Worker active in ${executionQueue.getMode()} mode.`);
+    } else {
+      console.log('[Web Server] Standalone web mode: In-process worker disabled (handled by bugsniper-worker service).');
+      await executionQueue.initialize();
+      console.log(`✓ Execution queue initialized in producer mode: ${executionQueue.getMode()}`);
+    }
+
+    // All production dependencies verified
+    setServerReady(true);
+    console.log('✓ Production readiness verified: Database, Migrations, Seed, Redis, and Worker are ONLINE.');
+
+    // Background competition timer ticker
+    setInterval(async () => {
+      try {
+        await eventService.getEventStatus();
+      } catch {
+        // Silently ignore
+      }
+    }, 3000);
+
+  } catch (bootstrapErr: any) {
+    console.error('====================================================');
+    console.error('CRITICAL SERVER BOOTSTRAP FAILURE:');
+    console.error(bootstrapErr?.message || bootstrapErr);
+    if (bootstrapErr?.stack) {
+      console.error(bootstrapErr.stack);
+    }
+    console.error('====================================================');
+
+    if (isProduction) {
+      console.error('FATAL: Aborting server startup in production due to dependency failure.');
+      process.exit(1);
+    } else {
+      console.warn('WARNING: Continuing in degraded development mode...');
+    }
+  }
+
   const app = express();
-  const PORT = 3000;
+
+  // Configure Express trust proxy for Nginx HTTPS reverse proxy
+  app.set('trust proxy', 1);
 
   app.use(express.json());
   app.use(express.text({ type: ['text/*', 'application/x-www-form-urlencoded'] }));
   app.use(cookieParser());
 
-  // Enable CORS with support for credentials across preview environments and iframes
+  // Configure CORS
+  const rawAllowedOrigins = [
+    process.env.CORS_ORIGIN,
+    process.env.APP_URL,
+  ]
+    .filter(Boolean)
+    .flatMap((o) => o!.split(',').map((s) => s.trim().replace(/\/$/, '')));
+
   app.use((req, res, next) => {
     const origin = req.headers.origin;
-    if (origin) {
-      res.setHeader('Access-Control-Allow-Origin', origin);
+
+    if (!isProduction) {
+      // Development mode: support credentialed requests from preview containers and dev ports
+      if (origin) {
+        res.setHeader('Access-Control-Allow-Origin', origin);
+        res.setHeader('Access-Control-Allow-Credentials', 'true');
+      } else {
+        res.setHeader('Access-Control-Allow-Origin', '*');
+      }
     } else {
-      res.setHeader('Access-Control-Allow-Origin', '*');
+      // Production mode: reject arbitrary origins; only allow explicitly configured origins
+      if (origin && rawAllowedOrigins.includes(origin.replace(/\/$/, ''))) {
+        res.setHeader('Access-Control-Allow-Origin', origin);
+        res.setHeader('Access-Control-Allow-Credentials', 'true');
+      }
     }
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
+
     res.setHeader(
       'Access-Control-Allow-Methods',
       'GET, HEAD, POST, PUT, DELETE, PATCH, OPTIONS'
     );
     res.setHeader(
       'Access-Control-Allow-Headers',
-      'Origin, X-Requested-With, Content-Type, Accept, Authorization, Cookie, X-Session-Token, X-Admin-Token'
+      'Origin, X-Requested-With, Content-Type, Accept, Authorization, Cookie, X-Session-Token, X-Admin-Token, X-Admin-Key'
     );
 
     if (req.method === 'OPTIONS') {
@@ -49,6 +163,9 @@ async function startServer() {
     }
     next();
   });
+
+  // Root-level and /api readiness probes
+  app.get(['/ready', '/health/ready'], handleReadinessProbe);
 
   // Mount API routes BEFORE Vite middleware
   app.use('/api', healthRouter);
@@ -60,7 +177,7 @@ async function startServer() {
   app.use('/api/leaderboard', leaderboardRouter);
   app.use('/api/admin', adminRouter);
 
-  // Execution API aliases to ensure all standard execution paths return JSON with participant auth
+  // Execution API aliases to ensure all standard execution paths return JSON with participant auth & rate limiting
   app.post(
     [
       '/api/execution/run',
@@ -70,6 +187,7 @@ async function startServer() {
       '/api/run',
     ],
     requireParticipantAuth,
+    executionRateLimiter,
     handleRunExecution
   );
 
@@ -102,46 +220,12 @@ async function startServer() {
     });
   }
 
-  // Start HTTP listener immediately so container ingress and control plane health checks pass promptly
+  // Start HTTP listener only after initial bootstrap sequence
   app.listen(PORT, '0.0.0.0', () => {
+    console.log(`====================================================`);
     console.log(`BUG SNIPER Server listening on http://0.0.0.0:${PORT}`);
-
-    // Asynchronously bootstrap Database Migrations & Initial Seed
-    (async () => {
-      try {
-        console.log('Initializing BUG SNIPER persistent PostgreSQL database...');
-        await runMigrations();
-        // Core seed only: zero demo participants in production/clean startup
-        await runSeed({ includeDemoParticipants: false });
-        const health = await checkDatabaseHealth();
-        console.log(`✓ Active Database: ${health.engine} [Mode: ${health.mode}] (DATABASE_URL configured: ${health.databaseUrlConfigured})`);
-
-        // Safe registration verification
-        const regCounts = await teamRepository.getRegistrationCounts();
-        console.log(`✓ Registration State: ${regCounts.teams} teams, ${regCounts.participants} participants, ${regCounts.teamMembers} memberships`);
-        if (regCounts.teams === 0) {
-          console.log('✓ Clean deployment verified: 0 registered participant teams. Ready for symposium CSV import.');
-        } else {
-          console.log(`ℹ Notice: Database contains ${regCounts.teams} registered team(s).`);
-        }
-
-        // Start Java execution worker for untrusted code execution after DB is verified
-        executionWorker.start().catch((err) => {
-          console.error('[ExecutionWorker] Startup warning:', err);
-        });
-
-        // Authoritative background competition timer ticker (starts only after DB is ready)
-        setInterval(async () => {
-          try {
-            await eventService.getEventStatus();
-          } catch {
-            // Silently ignore
-          }
-        }, 3000);
-      } catch (dbInitErr) {
-        console.error('Warning: Database bootstrap encountered an issue:', dbInitErr);
-      }
-    })();
+    console.log(`Readiness: http://0.0.0.0:${PORT}/api/health/ready`);
+    console.log(`====================================================`);
   });
 }
 

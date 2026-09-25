@@ -37,7 +37,7 @@ export function loadConfig(): SystemConfig {
     competition: {
       durationMinutes: parseInt(process.env.COMPETITION_DURATION_MINUTES || '60', 10),
       minTeamMembers: parseInt(process.env.MIN_TEAM_MEMBERS || '1', 10),
-      maxTeamMembers: parseInt(process.env.MAX_TEAM_MEMBERS || '3', 10),
+      maxTeamMembers: parseInt(process.env.MAX_TEAM_MEMBERS || '1', 10),
     },
     queue: {
       executionQueueName: process.env.EXECUTION_QUEUE_NAME || 'java-execution',

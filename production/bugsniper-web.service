@@ -1,0 +1,44 @@
+[Unit]
+Description=BUG SNIPER - Web Server & API Application
+After=network.target postgresql.service redis.service
+Wants=postgresql.service redis.service
+
+[Service]
+Type=simple
+User=bugsniper
+Group=bugsniper
+WorkingDirectory=/opt/bugsniper
+
+# Secure production environment variables
+EnvironmentFile=/etc/bugsniper/bugsniper.env
+Environment=NODE_ENV=production
+Environment=PORT=3000
+Environment=START_IN_PROCESS_WORKER=false
+
+# Node runtime execution - runs standalone web server without devDependencies or tsx
+ExecStart=/usr/bin/node dist/server.cjs
+
+# Process Lifecycle & Recovery
+Restart=on-failure
+RestartSec=5
+KillMode=mixed
+TimeoutStopSec=15
+
+# Security Hardening for Public Web Tier:
+# STRICTLY NO Linux Capabilities (no CAP_SYS_ADMIN, no CAP_SETUID, no CAP_SETGID)
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+# Filesystem protections
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/bugsniper /var/log/bugsniper
+PrivateTmp=true
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=2048
+
+[Install]
+WantedBy=multi-user.target

@@ -31,21 +31,21 @@ export const INITIAL_DIFFICULTY_CONFIGS: DifficultyConfig[] = [
   {
     difficulty: ChallengeDifficulty.EASY,
     displayName: 'Easy',
-    requiredSolvesToUnlockNext: 4, // Solves in Easy required to unlock Medium
+    requiredSolvesToUnlockNext: 6, // 6 solves in Easy required to unlock Medium
     defaultPoints: 10,
     order: 1,
   },
   {
     difficulty: ChallengeDifficulty.MEDIUM,
     displayName: 'Medium',
-    requiredSolvesToUnlockNext: 3, // Solves in Medium required to unlock Hard
+    requiredSolvesToUnlockNext: 5, // 5 solves in Medium required to unlock Hard
     defaultPoints: 25,
     order: 2,
   },
   {
     difficulty: ChallengeDifficulty.HARD,
     displayName: 'Hard',
-    requiredSolvesToUnlockNext: 2, // Solves in Hard required to unlock Extreme
+    requiredSolvesToUnlockNext: 4, // 4 solves in Hard required to unlock Extreme
     defaultPoints: 50,
     order: 3,
   },

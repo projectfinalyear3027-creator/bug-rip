@@ -5,7 +5,11 @@
 
 import { ExecutionJobPayload, ExecutionResult } from './types';
 
-export const EXECUTION_QUEUE_NAME = 'bugrip-java-execution-queue';
+// Canonical BullMQ runtime execution queue name
+export const EXECUTION_QUEUE_NAME = 'java-execution';
+
+// DEPRECATED / LEGACY queue constant (isolated for historical backward compatibility)
+export const LEGACY_EXECUTION_QUEUE_NAME = 'bugrip-java-execution-queue';
 
 export interface WorkerJobEvents {
   onJobReceived: (jobId: string) => void;

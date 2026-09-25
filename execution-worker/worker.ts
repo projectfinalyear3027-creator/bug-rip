@@ -150,7 +150,7 @@ export class ExecutionWorkerService {
 export const executionWorker = new ExecutionWorkerService();
 
 // Support standalone process launch: `tsx execution-worker/worker.ts`
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1]?.endsWith('execution-worker/worker.ts') || process.argv[1]?.endsWith('worker.ts')) {
   executionWorker.start().catch((err) => {
     console.error('[ExecutionWorker] Failed to start:', err);
     process.exit(1);

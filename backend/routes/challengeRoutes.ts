@@ -16,6 +16,7 @@ import { requireParticipantAuth } from '../middleware/authMiddleware.ts';
 import { executionQueue } from '../../execution-worker/queue.ts';
 import { completionService } from '../services/completionService.ts';
 import { assertNoForbiddenKeys } from '../rules/participantDataSecurity.ts';
+import { executionRateLimiter, flagSubmissionRateLimiter } from '../middleware/rateLimiter.ts';
 
 export const challengeRouter = Router();
 
@@ -281,6 +282,7 @@ challengeRouter.get(
 challengeRouter.post(
   '/:id/submit-flag',
   requireParticipantAuth,
+  flagSubmissionRateLimiter,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const participantId = req.participant?.id || req.team!.id;

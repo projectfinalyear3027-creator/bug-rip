@@ -232,11 +232,13 @@ export async function requireAdmin(
       }
     }
 
-    // 3. Optional internal development key fallback (for automated headless test runs)
+    // 3. Optional internal development key fallback (only if ADMIN_SECRET_KEY is configured)
     const adminHeader = req.headers['x-admin-key'];
+    const configuredAdminKey = process.env.ADMIN_SECRET_KEY?.trim();
     if (
       adminHeader &&
-      adminHeader === (process.env.ADMIN_SECRET_KEY || 'bugrip-superadmin-secret-2026')
+      configuredAdminKey &&
+      adminHeader === configuredAdminKey
     ) {
       req.adminUser = {
         id: '00000000-0000-0000-0000-000000000001',

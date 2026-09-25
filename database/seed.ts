@@ -10,7 +10,7 @@
 
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
-import { db, schema, checkDatabaseHealth } from '../src/db/index.ts';
+import { db, schema, checkDatabaseHealth, closeDatabase } from '../src/db/index.ts';
 import {
   adminUsers,
   teams,
@@ -25,6 +25,8 @@ import {
   teamUnlockedRounds,
   progressionOverrides,
   teamChallenges,
+  participantChallenges,
+  participantUnlockedRounds,
   sessions,
 } from '../src/db/schema.ts';
 import { eq, inArray, or, notInArray } from 'drizzle-orm';
@@ -47,8 +49,8 @@ export async function runSeed(options?: SeedOptions) {
   const health = await checkDatabaseHealth();
   console.log(`Target Engine: ${health.engine} (Connected: ${health.connected})`);
 
-  // 1. Seed Authoritative Event Settings
-  console.log('Seeding Event Settings (60-minute Java Debugging CTF)...');
+  // 1. Seed Authoritative Event Settings (Solo Competition: 1 participant unit)
+  console.log('Seeding Event Settings (60-minute Java Debugging CTF - Solo Only)...');
   await db
     .insert(eventSettings)
     .values({
@@ -57,11 +59,11 @@ export async function runSeed(options?: SeedOptions) {
       status: 'NOT_STARTED',
       durationMinutes: 60,
       minTeamMembers: 1,
-      maxTeamMembers: 2,
+      maxTeamMembers: 1,
       progressionMode: 'SEQUENTIAL',
       fullscreenRequired: false,
       liveScoreboardEnabled: true,
-      showTeamMembersOnLive: true,
+      showTeamMembersOnLive: false,
       showCurrentRoundOnLive: true,
       showTimerOnLive: true,
     })
@@ -71,8 +73,9 @@ export async function runSeed(options?: SeedOptions) {
         eventName: 'BUG SNIPER',
         durationMinutes: 60,
         minTeamMembers: 1,
-        maxTeamMembers: 2,
+        maxTeamMembers: 1,
         progressionMode: 'SEQUENTIAL',
+        showTeamMembersOnLive: false,
       },
     });
 
@@ -153,26 +156,70 @@ export async function runSeed(options?: SeedOptions) {
   }
 
   // 3. Seed Admin User
-  console.log('Seeding Default Admin User...');
-  const adminPasswordHash = await bcrypt.hash('BugRipAdmin2026!', 10);
+  console.log('Seeding Administrator Account...');
+  const isProduction = process.env.NODE_ENV === 'production' && process.env.PG_MEM !== 'true';
+  const configuredAdminPass = process.env.ADMIN_INITIAL_PASSWORD?.trim();
 
-  await db
-    .insert(adminUsers)
-    .values({
+  const existingAdmin = await db
+    .select()
+    .from(adminUsers)
+    .where(eq(adminUsers.username, 'admin'))
+    .limit(1);
+
+  if (existingAdmin.length === 0) {
+    if (isProduction) {
+      if (!configuredAdminPass) {
+        throw new Error(
+          'CRITICAL CONFIGURATION ERROR: ADMIN_INITIAL_PASSWORD environment variable is mandatory in production on initial setup. Hardcoding default passwords is strictly prohibited.'
+        );
+      }
+      if (
+        configuredAdminPass === 'BugRipAdmin2026!' ||
+        configuredAdminPass === 'admin' ||
+        configuredAdminPass === 'password' ||
+        configuredAdminPass === 'changeme' ||
+        configuredAdminPass.length < 10
+      ) {
+        throw new Error(
+          'CRITICAL SECURITY ERROR: ADMIN_INITIAL_PASSWORD in production cannot be the default "BugRipAdmin2026!" or a trivial password. Must be at least 10 characters.'
+        );
+      }
+    }
+
+    const adminPassword = configuredAdminPass || 'BugRipAdmin2026!';
+    const adminPasswordHash = await bcrypt.hash(adminPassword, 10);
+
+    await db.insert(adminUsers).values({
       username: 'admin',
       displayName: 'Tournament Director',
       passwordHash: adminPasswordHash,
       role: 'SUPER_ADMIN',
       isActive: true,
-    })
-    .onConflictDoUpdate({
-      target: adminUsers.username,
-      set: {
+    });
+  } else if (configuredAdminPass) {
+    if (isProduction) {
+      if (
+        configuredAdminPass === 'BugRipAdmin2026!' ||
+        configuredAdminPass === 'admin' ||
+        configuredAdminPass === 'password' ||
+        configuredAdminPass === 'changeme' ||
+        configuredAdminPass.length < 10
+      ) {
+        throw new Error(
+          'CRITICAL SECURITY ERROR: ADMIN_INITIAL_PASSWORD in production cannot be the default "BugRipAdmin2026!" or a trivial password. Must be at least 10 characters.'
+        );
+      }
+    }
+    const adminPasswordHash = await bcrypt.hash(configuredAdminPass, 10);
+    await db
+      .update(adminUsers)
+      .set({
         passwordHash: adminPasswordHash,
         role: 'SUPER_ADMIN',
         isActive: true,
-      },
-    });
+      })
+      .where(eq(adminUsers.username, 'admin'));
+  }
 
   // 4. Zero Demo Participant Teams Policy
   // Production and startup NEVER create demo participants.
@@ -207,6 +254,8 @@ export async function runSeed(options?: SeedOptions) {
 
   if (legacyDemoParts.length > 0) {
     const legacyPartIds = legacyDemoParts.map((p) => p.id);
+    await db.delete(participantChallenges).where(inArray(participantChallenges.participantId, legacyPartIds));
+    await db.delete(participantUnlockedRounds).where(inArray(participantUnlockedRounds.participantId, legacyPartIds));
     await db.delete(teamMembers).where(inArray(teamMembers.participantId, legacyPartIds));
     await db.delete(participants).where(inArray(participants.id, legacyPartIds));
     console.log(`✓ Purged ${legacyPartIds.length} legacy demo participant(s) from persistent storage.`);
@@ -247,6 +296,7 @@ export async function runSeed(options?: SeedOptions) {
     await db.delete(challengeTestCases).where(inArray(challengeTestCases.challengeId, staleIds));
     await db.delete(challengeFlags).where(inArray(challengeFlags.challengeId, staleIds));
     await db.delete(teamChallenges).where(inArray(teamChallenges.challengeId, staleIds));
+    await db.delete(participantChallenges).where(inArray(participantChallenges.challengeId, staleIds));
     await db.delete(challenges).where(inArray(challenges.id, staleIds));
   }
 
@@ -354,11 +404,15 @@ export async function seedDevelopmentParticipants(): Promise<void> {
 }
 
 // Allow standalone execution via `tsx database/seed.ts`
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (
+  process.argv[1]?.endsWith('database/seed.ts') ||
+  process.argv[1]?.endsWith('seed.ts')
+) {
   runSeed()
     .then(() => {
       console.log('Seed process finished.');
-      process.exit(0);
+      closeDatabase().catch(() => {});
+      setTimeout(() => process.exit(0), 100);
     })
     .catch((err) => {
       console.error('Seed failed:', err);

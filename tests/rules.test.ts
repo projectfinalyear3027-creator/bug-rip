@@ -241,23 +241,34 @@ assert(
   'Easy is the sole difficulty unlocked at start',
 );
 
-// 4 solves in Easy unlocks Medium
-const fourEasySolves = { ...zeroSolves, [ChallengeDifficulty.EASY]: 4 };
-const mediumUnlocked = calculateUnlockedDifficulties(fourEasySolves);
+// 6 solves in Easy unlocks Medium
+const sixEasySolves = { ...zeroSolves, [ChallengeDifficulty.EASY]: 6 };
+const mediumUnlocked = calculateUnlockedDifficulties(sixEasySolves);
 assert(
   mediumUnlocked.includes(ChallengeDifficulty.EASY) &&
   mediumUnlocked.includes(ChallengeDifficulty.MEDIUM),
-  'Medium unlocks upon reaching 4 unique Easy solves, AND Easy remains unlocked',
+  'Medium unlocks upon reaching 6 unique Easy solves, AND Easy remains unlocked',
 );
 
-// 3 solves in Medium unlocks Hard
-const threeMedSolves = { ...fourEasySolves, [ChallengeDifficulty.MEDIUM]: 3 };
-const hardUnlocked = calculateUnlockedDifficulties(threeMedSolves);
+// 5 solves in Medium unlocks Hard
+const fiveMedSolves = { ...sixEasySolves, [ChallengeDifficulty.MEDIUM]: 5 };
+const hardUnlocked = calculateUnlockedDifficulties(fiveMedSolves);
 assert(
   hardUnlocked.includes(ChallengeDifficulty.HARD) &&
   hardUnlocked.includes(ChallengeDifficulty.EASY) &&
   hardUnlocked.includes(ChallengeDifficulty.MEDIUM),
-  'Hard unlocks upon reaching 3 Medium solves, with all previous tiers retained',
+  'Hard unlocks upon reaching 5 Medium solves, with all previous tiers retained',
+);
+
+// 4 solves in Hard unlocks Extreme
+const fourHardSolves = { ...fiveMedSolves, [ChallengeDifficulty.HARD]: 4 };
+const extremeUnlocked = calculateUnlockedDifficulties(fourHardSolves);
+assert(
+  extremeUnlocked.includes(ChallengeDifficulty.EXTREME) &&
+  extremeUnlocked.includes(ChallengeDifficulty.HARD) &&
+  extremeUnlocked.includes(ChallengeDifficulty.MEDIUM) &&
+  extremeUnlocked.includes(ChallengeDifficulty.EASY),
+  'Extreme unlocks upon reaching 4 Hard solves, with all previous tiers retained',
 );
 
 // Admin override unlocks all

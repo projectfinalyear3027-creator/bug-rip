@@ -45,12 +45,18 @@ export class ExecutionQueueManager extends EventEmitter {
       const client = new IORedis(redisUrl, {
         maxRetriesPerRequest: null,
         connectTimeout: 2500,
-        retryStrategy: isProduction ? (times) => (times <= 3 ? Math.min(times * 500, 2000) : null) : () => null,
+        retryStrategy: (times) => Math.min(times * 150, 2000),
         lazyConnect: true,
       });
 
       // Attach error handler to prevent unhandled EventEmitter error during connection checks
       client.on('error', () => {});
+      client.on('close', () => {
+        this.isRedisAvailable = false;
+      });
+      client.on('connect', () => {
+        this.isRedisAvailable = true;
+      });
 
       await client.connect();
       const ping = await client.ping();
@@ -156,6 +162,33 @@ export class ExecutionQueueManager extends EventEmitter {
    */
   public getMode(): 'redis' | 'in-memory' {
     return this.isRedisAvailable ? 'redis' : 'in-memory';
+  }
+
+  /**
+   * Check active queue and Redis health
+   */
+  public async checkHealth(): Promise<{ available: boolean; mode: 'redis' | 'in-memory'; error?: string }> {
+    if (!this.redisConnection) {
+      const isProd = process.env.NODE_ENV === 'production';
+      return { available: !isProd, mode: 'in-memory' };
+    }
+
+    try {
+      const pong = await Promise.race([
+        this.redisConnection.ping(),
+        new Promise<string>((_, reject) => setTimeout(() => reject(new Error('Redis ping timeout')), 800)),
+      ]);
+      const healthy = pong === 'PONG';
+      this.isRedisAvailable = healthy;
+      return { available: healthy, mode: 'redis' };
+    } catch (err: any) {
+      this.isRedisAvailable = false;
+      return {
+        available: false,
+        mode: 'redis',
+        error: err?.message || 'Redis connection unavailable',
+      };
+    }
   }
 
   /**

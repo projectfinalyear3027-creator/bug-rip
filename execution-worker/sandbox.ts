@@ -46,23 +46,8 @@ export class IsolatedJavaSandbox {
     }
 
     try {
-      const isRoot = process.getuid ? process.getuid() === 0 : false;
-      if (!isRoot) {
-        this.hasUnshareAndSandboxUser = false;
-        return false;
-      }
-
-      // Check if user 'sandbox' exists
-      const hasSandboxUser = fs.existsSync('/home/sandbox') || (() => {
-        try {
-          const passwd = fs.readFileSync('/etc/passwd', 'utf-8');
-          return passwd.includes('sandbox:');
-        } catch {
-          return false;
-        }
-      })();
-
-      this.hasUnshareAndSandboxUser = hasSandboxUser;
+      const jdk = resolveJdkEnvironment();
+      this.hasUnshareAndSandboxUser = jdk.isolationAvailable;
       return this.hasUnshareAndSandboxUser;
     } catch {
       this.hasUnshareAndSandboxUser = false;
@@ -142,7 +127,8 @@ export class IsolatedJavaSandbox {
     }
 
     // 1. Validate Source Code
-    const validation = this.validateSource(payload.submittedJavaSource);
+    const rawSource = payload.submittedJavaSource || (payload as any).sourceCode || '';
+    const validation = this.validateSource(rawSource);
     if (!validation.valid) {
       return {
         jobId,
@@ -178,9 +164,9 @@ export class IsolatedJavaSandbox {
     } catch {}
 
     const sourceFilePath = path.join(workspaceDir, `${mainClassName}.java`);
-    fs.writeFileSync(sourceFilePath, payload.submittedJavaSource, 'utf8');
+    fs.writeFileSync(sourceFilePath, rawSource, 'utf8');
 
-    // Chown to sandbox:sandbox if running as root
+    // Chown to sandbox:sandbox if running as root or capable
     const canUseSandboxUser = await this.isIsolationSupported();
     if (canUseSandboxUser) {
       try {
@@ -188,7 +174,11 @@ export class IsolatedJavaSandbox {
         fs.chownSync(workspaceDir, 1001, 1001);
         fs.chownSync(sourceFilePath, 1001, 1001);
       } catch {
-        // Ignored if chown not permitted
+        // If non-root and chown not permitted, open permissions on this specific workspace
+        try {
+          fs.chmodSync(workspaceDir, 0o777);
+          fs.chmodSync(sourceFilePath, 0o666);
+        } catch {}
       }
     }
 

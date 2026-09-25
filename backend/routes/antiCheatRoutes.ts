@@ -6,6 +6,7 @@
 
 import { Router, Request, Response, NextFunction } from 'express';
 import { requireParticipantAuth } from '../middleware/authMiddleware.ts';
+import { antiCheatRateLimiter } from '../middleware/rateLimiter.ts';
 import { antiCheatService } from '../services/antiCheatService.ts';
 import { eventRepository } from '../repositories/eventRepository.ts';
 
@@ -72,8 +73,8 @@ const handleRecordEvent = async (req: Request, res: Response, next: NextFunction
   }
 };
 
-antiCheatRouter.post('/events', requireParticipantAuth, handleRecordEvent);
-antiCheatRouter.post('/event', requireParticipantAuth, handleRecordEvent);
+antiCheatRouter.post('/events', requireParticipantAuth, antiCheatRateLimiter, handleRecordEvent);
+antiCheatRouter.post('/event', requireParticipantAuth, antiCheatRateLimiter, handleRecordEvent);
 
 /**
  * GET /api/anti-cheat/status
