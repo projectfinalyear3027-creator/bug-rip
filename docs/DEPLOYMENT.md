@@ -34,7 +34,7 @@ This document describes the complete, authoritative procedure for deploying **BU
                  ▼ Job Dispatch
         ┌──────────────────────────────────┐
         │    Java Sandbox Worker Daemon    │
-        │    (unshare -n -p -f + setpriv)  │  Runs unprivileged as sandbox user (UID 1001)
+        │    (unshare -n -p -f + setpriv)  │  Runs unprivileged as sandbox user (default UID 2001, configurable)
         └──────────────────────────────────┘
 ```
 
@@ -58,19 +58,28 @@ sudo useradd -r -s /usr/sbin/nologin -d /opt/bugsniper bugsniper
 sudo useradd -r -s /usr/sbin/nologin -d /opt/bugsniper bugsniper-worker
 ```
 
-### C. Isolated Sandbox Execution Account (`sandbox` - UID 1001)
+### C. Isolated Sandbox Execution Account (`sandbox` - Default UID/GID 2001, Configurable)
+The target VM SSH/login user often already claims UID 1001 on Google Cloud Ubuntu VMs. Therefore, BUG SNIPER configures the sandbox user with UID 2001 (configurable via `SANDBOX_USER`, `SANDBOX_UID`, and `SANDBOX_GID` in `/etc/bugsniper/bugsniper.env`).
+
 ```bash
-# Unprivileged sandbox user for compiling and executing participant Java submissions
-sudo useradd -u 1001 -U -m -s /bin/bash sandbox
+# Create dedicated sandbox group and unprivileged user (UID/GID 2001)
+sudo groupadd -g 2001 sandbox
+sudo useradd -u 2001 -g 2001 -m -s /bin/bash sandbox
+
+# Configure in /etc/bugsniper/bugsniper.env:
+# SANDBOX_USER=sandbox
+# SANDBOX_UID=2001
+# SANDBOX_GID=2001
 ```
 
-### D. Sandbox Workspace Directory Permissions
+### D. Sandbox Workspace Directory Permissions & Ownership
 ```bash
 # Create the ephemeral sandbox base directory
 sudo mkdir -p /tmp/sandboxes
+sudo chown 2001:2001 /tmp/sandboxes
 sudo chmod 1777 /tmp/sandboxes
 ```
-`mode 1777` (sticky bit) allows the `bugsniper-worker` service account and the `sandbox` (UID 1001) execution user to read, write, and clean up ephemeral job workspaces without permission collisions. The public web process (`bugsniper`) does not interact with this directory.
+`mode 1777` (sticky bit) allows the `bugsniper-worker` service account and the `sandbox` (UID 2001) execution user to read, write, and clean up ephemeral job workspaces without permission collisions. The public web process (`bugsniper`) does not interact with this directory.
 
 ---
 
@@ -95,9 +104,9 @@ The system validates these 7 primitives at startup in production. If any primiti
 2. `javac` binary available (`/usr/bin/javac`)
 3. OpenJDK 21 LTS verified (`javac -version` major version 21)
 4. `unshare` binary available (`/usr/bin/unshare` for network namespace isolation)
-5. `setpriv` binary available (`/usr/bin/setpriv` for privilege dropping to UID 1001)
-6. Sandbox user exists (`id -u sandbox` returns `1001`)
-7. `/tmp/sandboxes` exists and has safe permissions (`1777`)
+5. `setpriv` binary available (`/usr/bin/setpriv` for privilege dropping to configured `SANDBOX_UID`)
+6. Sandbox user exists and matches configured UID/GID (`id -u $SANDBOX_USER` returns `$SANDBOX_UID`, default 2001)
+7. `/tmp/sandboxes` exists, is writable, and has safe permissions (`1777`)
 
 ---
 

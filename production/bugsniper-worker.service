@@ -24,7 +24,7 @@ TimeoutStopSec=30
 
 # Hardened Linux Sandbox Capabilities:
 # Only the minimal ambient capabilities strictly required for Linux namespace isolation (unshare)
-# and privilege dropping to UID 1001 sandbox user (setpriv)
+# and privilege dropping to unprivileged sandbox user (setpriv, default UID/GID 2001)
 AmbientCapabilities=CAP_SYS_ADMIN CAP_SETUID CAP_SETGID
 CapabilityBoundingSet=CAP_SYS_ADMIN CAP_SETUID CAP_SETGID
 
@@ -32,7 +32,7 @@ CapabilityBoundingSet=CAP_SYS_ADMIN CAP_SETUID CAP_SETGID
 ProtectSystem=full
 ProtectHome=true
 ReadWritePaths=/opt/bugsniper /tmp/sandboxes /var/log/bugsniper
-# PrivateTmp must be false so the unprivileged UID 1001 sandbox user can execute inside /tmp/sandboxes
+# PrivateTmp must be false so the unprivileged sandbox user (default UID 2001) can execute inside /tmp/sandboxes
 PrivateTmp=false
 
 # Resource limits

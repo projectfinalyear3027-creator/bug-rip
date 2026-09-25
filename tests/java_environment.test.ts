@@ -3,7 +3,7 @@
  * 
  * Verifies:
  * 1. Environment: javac and java existence, OpenJDK 21 LTS validation, JAVA_HOME resolution
- * 2. Sandbox: UID 1001 (sandbox), network namespace isolation (unshare -n), workspace confinement
+ * 2. Sandbox: Configurable sandbox user, network namespace isolation (unshare -n), workspace confinement
  * 3. Execution Pipeline: Trivial Java program, compiler errors, runtime exceptions, timeouts, output limits
  * 4. Path & Privacy Sanitization: No internal host paths or ENOENT errors exposed
  * 5. Full Challenge Flow: Code execution -> Behavioral validation -> Flag reveal
@@ -79,12 +79,12 @@ async function runJavaEnvironmentTests() {
   // Direct test of unshare + setpriv
   const sandboxProbe = spawnSync('unshare', [
     '-n', '-p', '-f', '--mount-proc',
-    'setpriv', '--reuid', '1001', '--regid', '1001', '--clear-groups', '--no-new-privs',
+    'setpriv', '--reuid', String(jdk.sandboxConfig.uid), '--regid', String(jdk.sandboxConfig.gid), '--clear-groups', '--no-new-privs',
     'id'
   ], { encoding: 'utf8' });
 
   assert(sandboxProbe.status === 0, 'unshare + setpriv probe executed with status 0');
-  assert(sandboxProbe.stdout.includes('uid=1001'), 'Sandbox probe confirms execution under UID 1001');
+  assert(sandboxProbe.stdout.includes(`uid=${jdk.sandboxConfig.uid}`), `Sandbox probe confirms execution under UID ${jdk.sandboxConfig.uid}`);
 
   // ----------------------------------------------------------------
   // [Suite 3] Trivial Java Program Execution (User Request Specification)

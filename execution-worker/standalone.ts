@@ -5,7 +5,7 @@
  * 1. Verifies PostgreSQL and Redis connectivity
  * 2. Runs OpenJDK 21 and Linux isolation preflight checks
  * 3. Consumes Java execution jobs from Redis/BullMQ queue
- * 4. Runs submissions under unprivileged UID 1001 sandbox with unshare isolation
+ * 4. Runs submissions under unprivileged sandbox user with unshare isolation
  * 5. Records results to PostgreSQL database
  */
 
@@ -46,8 +46,9 @@ async function startStandaloneWorker() {
   }
 
   const jdkInfo = resolveJdkEnvironment();
+  const sandboxUserLabel = `${jdkInfo.sandboxConfig?.user || 'sandbox'} (UID ${jdkInfo.sandboxConfig?.uid || 2001}:GID ${jdkInfo.sandboxConfig?.gid || 2001})`;
   console.log(`[Worker] Verified OpenJDK 21: ${jdkInfo.javacVersion}`);
-  console.log(`[Worker] Sandbox User (UID 1001): ${jdkInfo.sandboxUserExists ? 'READY' : 'NOT FOUND'}`);
+  console.log(`[Worker] Sandbox User ${sandboxUserLabel}: ${jdkInfo.sandboxUserExists ? 'READY' : 'NOT FOUND'}`);
   console.log(`[Worker] Linux Namespace Isolation (unshare): ${jdkInfo.isolationAvailable ? 'ACTIVE' : 'INACTIVE'}`);
 
   // 3. Start Execution Worker Service

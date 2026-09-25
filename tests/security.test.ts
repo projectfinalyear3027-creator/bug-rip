@@ -4,7 +4,7 @@
  * Deep verification covering:
  * 1. Production Redis vs Development In-Memory Queue Fallback
  * 2. Network Isolation (External, Localhost, PostgreSQL, Redis, Backend, Cloud Metadata, DNS)
- * 3. Privilege Isolation (UID/GID 1001, no-new-privs, sudo denial)
+ * 3. Privilege Isolation (Configurable UID/GID, no-new-privs, sudo denial)
  * 4. Filesystem Isolation (Parent directory listing, sensitive file denial, cross-workspace privacy)
  * 5. Process Cleanup (Watchdog termination, orphan processes, child processes)
  * 6. Resource Limits (CPU exhaustion, memory exhaustion, huge output, large source, long runtime)
@@ -217,10 +217,12 @@ public class Main {
     submittedAt: new Date().toISOString(),
   });
 
+  const { getSandboxConfig } = await import('../execution-worker/jdkEnvironment');
+  const sandboxConfig = getSandboxConfig();
   const privOut = privRes.stdout;
-  assert(privOut.includes('JAVA_USER: sandbox'), 'Java runtime identity is sandbox user');
-  assert(privOut.includes('uid=1001(sandbox) gid=1001(sandbox)'), 'Process executes as UID 1001 / GID 1001');
-  assert(privOut.includes('groups=1001(sandbox)'), 'Supplementary groups are stripped');
+  assert(privOut.includes(`JAVA_USER: ${sandboxConfig.user}`), 'Java runtime identity is sandbox user');
+  assert(privOut.includes(`uid=${sandboxConfig.uid}(${sandboxConfig.user}) gid=${sandboxConfig.gid}(${sandboxConfig.user})`), `Process executes as UID ${sandboxConfig.uid} / GID ${sandboxConfig.gid}`);
+  assert(privOut.includes(`groups=${sandboxConfig.gid}(${sandboxConfig.user})`), 'Supplementary groups are stripped');
   assert(privOut.includes('SUDO_BLOCKED') || privOut.includes('Permission denied'), 'Privilege escalation via sudo is denied');
 
   // -------------------------------------------------------------

@@ -55,3 +55,26 @@ export interface SandboxResourceLimits {
   networkAccess: boolean;       // false (strictly isolated)
   readOnlyRootFs?: boolean;     // true
 }
+
+export interface SandboxConfig {
+  user: string;
+  uid: number;
+  gid: number;
+}
+
+export interface SandboxIdentityStatus {
+  user: string;
+  configuredUid: number;
+  configuredGid: number;
+  userExists: boolean;
+  actualUid?: number;
+  actualGid?: number;
+  uidMatches: boolean;
+  gidMatches: boolean;
+  directoryExists: boolean;
+  directoryWritable: boolean;
+  directoryStickyOrOwned: boolean;
+  valid: boolean;
+  error?: string;
+}
+

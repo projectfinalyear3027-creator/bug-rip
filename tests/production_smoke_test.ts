@@ -9,7 +9,7 @@
  * - Standalone worker daemon artifact (dist/worker.cjs)
  * - Standalone web server artifact (dist/server.cjs) with START_IN_PROCESS_WORKER=false
  * - OpenJDK 21 LTS javac & java
- * - unshare network namespace + setpriv sandbox UID 1001
+ * - unshare network namespace + setpriv sandbox UID (default 2001, configurable)
  * - Failure mode validation (Stopping Redis, Stopping PostgreSQL)
  * - Restart and migration idempotency
  * - End-to-end job submission: Web -> Redis Queue -> Standalone Worker -> Sandbox -> PostgreSQL

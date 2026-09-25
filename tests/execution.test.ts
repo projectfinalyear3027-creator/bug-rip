@@ -8,7 +8,7 @@
  * 4. Timeout enforcement (TIMEOUT on infinite loops)
  * 5. Output limit truncation (OUTPUT_LIMIT on stdout overflow)
  * 6. Network isolation via Linux network namespaces (no outbound network)
- * 7. Dropped privileges (executes as unprivileged UID 1001)
+ * 7. Dropped privileges (executes as unprivileged sandbox user)
  * 8. End-to-end Worker & Queue processing with database state updates
  */
 

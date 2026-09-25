@@ -260,7 +260,7 @@ export const ArchitectureOverview: React.FC = () => {
                 <span>Process Table Ceiling (--pids-limit 32)</span>
               </div>
               <p className="text-zinc-400">
-                Prevents fork bombs and thread exhaustion. Non-root user `sandbox (uid 1001)` prevents privilege escalation.
+                Prevents fork bombs and thread exhaustion. Configurable unprivileged user `sandbox (default uid 2001)` prevents privilege escalation.
               </p>
             </div>
           </div>

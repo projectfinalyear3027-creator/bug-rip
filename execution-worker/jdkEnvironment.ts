@@ -7,13 +7,14 @@
  * - Verification of compiler presence (ensures full JDK, not just JRE)
  * - Major version compatibility check (OpenJDK 21 LTS)
  * - Safe automatic provisioning of OpenJDK 21 and sandbox user if missing and running as root
- * - Linux sandbox capability detection (unshare network namespace, setpriv UID 1001)
+ * - Linux sandbox capability detection (unshare network namespace, setpriv configurable UID/GID)
  * - Secure startup health diagnostics without exposing host internal paths to participants
  */
 
 import fs from 'fs';
 import path from 'path';
 import { spawnSync, execSync } from 'child_process';
+import { SandboxConfig, SandboxIdentityStatus } from './types.ts';
 
 export interface JdkEnvironmentInfo {
   isAvailable: boolean;
@@ -26,6 +27,8 @@ export interface JdkEnvironmentInfo {
   isJdk21: boolean;
   isolationAvailable: boolean;
   sandboxUserExists: boolean;
+  sandboxConfig: SandboxConfig;
+  sandboxIdentity: SandboxIdentityStatus;
   error?: string;
 }
 
@@ -58,27 +61,199 @@ function isExecutable(filePath: string): boolean {
 }
 
 /**
- * Safely ensure the unprivileged sandbox user (UID 1001) exists if running as root
+ * Resolves the centralized sandbox identity configuration.
+ * Defaults to sandbox user with UID 2001 and GID 2001, avoiding collisions with host UID 1001.
+ */
+export function getSandboxConfig(): SandboxConfig {
+  const user = process.env.SANDBOX_USER?.trim() || 'sandbox';
+  const rawUid = process.env.SANDBOX_UID?.trim();
+  const rawGid = process.env.SANDBOX_GID?.trim();
+  const uid = rawUid ? parseInt(rawUid, 10) : 2001;
+  const gid = rawGid ? parseInt(rawGid, 10) : 2001;
+  return {
+    user,
+    uid: isNaN(uid) ? 2001 : uid,
+    gid: isNaN(gid) ? 2001 : gid,
+  };
+}
+
+/**
+ * Verifies that the ephemeral sandbox directory /tmp/sandboxes exists and has safe permissions.
+ */
+export function verifySandboxDirectory(dirPath = '/tmp/sandboxes'): {
+  exists: boolean;
+  isDir: boolean;
+  writable: boolean;
+  readable: boolean;
+  stickyBit: boolean;
+  modeOctal: string;
+  error?: string;
+} {
+  try {
+    if (!fs.existsSync(dirPath)) {
+      return {
+        exists: false,
+        isDir: false,
+        writable: false,
+        readable: false,
+        stickyBit: false,
+        modeOctal: '',
+        error: `Directory ${dirPath} does not exist`,
+      };
+    }
+    const stat = fs.statSync(dirPath);
+    if (!stat.isDirectory()) {
+      return {
+        exists: true,
+        isDir: false,
+        writable: false,
+        readable: false,
+        stickyBit: false,
+        modeOctal: '',
+        error: `${dirPath} is not a directory`,
+      };
+    }
+    const mode = stat.mode;
+    const stickyBit = (mode & 0o1000) !== 0;
+    const modeOctal = (mode & 0o7777).toString(8);
+    let readable = true;
+    let writable = true;
+    try {
+      fs.accessSync(dirPath, fs.constants.R_OK);
+    } catch {
+      readable = false;
+    }
+    try {
+      fs.accessSync(dirPath, fs.constants.W_OK);
+    } catch {
+      writable = false;
+    }
+    return {
+      exists: true,
+      isDir: true,
+      writable,
+      readable,
+      stickyBit,
+      modeOctal,
+    };
+  } catch (err: any) {
+    return {
+      exists: false,
+      isDir: false,
+      writable: false,
+      readable: false,
+      stickyBit: false,
+      modeOctal: '',
+      error: err?.message,
+    };
+  }
+}
+
+/**
+ * Verifies that the configured sandbox execution user exists, matches configured UID/GID,
+ * and that /tmp/sandboxes is accessible.
+ */
+export function verifySandboxIdentity(): SandboxIdentityStatus {
+  const config = getSandboxConfig();
+  const dirCheck = verifySandboxDirectory('/tmp/sandboxes');
+  let userExists = false;
+  let actualUid: number | undefined;
+  let actualGid: number | undefined;
+
+  try {
+    const uidOut = execSync(`id -u ${config.user} 2>/dev/null`, { encoding: 'utf8' }).trim();
+    const gidOut = execSync(`id -g ${config.user} 2>/dev/null`, { encoding: 'utf8' }).trim();
+    actualUid = parseInt(uidOut, 10);
+    actualGid = parseInt(gidOut, 10);
+    if (!isNaN(actualUid) && !isNaN(actualGid)) {
+      userExists = true;
+    }
+  } catch {
+    try {
+      const passwd = fs.readFileSync('/etc/passwd', 'utf8');
+      for (const line of passwd.split('\n')) {
+        const parts = line.split(':');
+        if (parts[0] === config.user && parts.length >= 4) {
+          actualUid = parseInt(parts[2], 10);
+          actualGid = parseInt(parts[3], 10);
+          userExists = true;
+          break;
+        }
+      }
+    } catch {}
+  }
+
+  const uidMatches = userExists && actualUid === config.uid;
+  const gidMatches = userExists && actualGid === config.gid;
+  const directoryExists = dirCheck.exists && dirCheck.isDir;
+  const directoryWritable = dirCheck.writable;
+  const directoryStickyOrOwned = dirCheck.stickyBit || dirCheck.writable;
+
+  let valid = userExists && uidMatches && gidMatches && directoryExists && directoryWritable;
+  let error: string | undefined;
+
+  if (!userExists) {
+    error = `Configured sandbox user "${config.user}" does not exist in the system.`;
+  } else if (!uidMatches) {
+    error = `Configured sandbox user "${config.user}" UID mismatch: expected ${config.uid}, found ${actualUid}.`;
+  } else if (!gidMatches) {
+    error = `Configured sandbox user "${config.user}" GID mismatch: expected ${config.gid}, found ${actualGid}.`;
+  } else if (!directoryExists) {
+    error = `/tmp/sandboxes directory does not exist or is not a directory.`;
+  } else if (!directoryWritable) {
+    error = `/tmp/sandboxes directory is not writable.`;
+  }
+
+  return {
+    user: config.user,
+    configuredUid: config.uid,
+    configuredGid: config.gid,
+    userExists,
+    actualUid,
+    actualGid,
+    uidMatches,
+    gidMatches,
+    directoryExists,
+    directoryWritable,
+    directoryStickyOrOwned,
+    valid,
+    error,
+  };
+}
+
+/**
+ * Safely ensure the unprivileged sandbox user exists with configured UID/GID if running as root
  */
 export function ensureSandboxUser(): boolean {
   try {
+    const config = getSandboxConfig();
     const isRoot = process.getuid ? process.getuid() === 0 : false;
-    let passwd = '';
-    try {
-      passwd = fs.readFileSync('/etc/passwd', 'utf8');
-    } catch {}
-    const hasSandbox = passwd.includes('sandbox:') || passwd.includes(':1001:') || fs.existsSync('/home/sandbox');
-    if (hasSandbox) return true;
+    const status = verifySandboxIdentity();
+    if (status.valid) return true;
 
     if (isRoot) {
       try {
-        execSync('useradd -u 1001 -U -m -s /bin/bash sandbox', { stdio: 'ignore' });
-        return true;
+        if (!status.userExists) {
+          try {
+            execSync(`groupadd -g ${config.gid} ${config.user} 2>/dev/null || true`, { stdio: 'ignore' });
+          } catch {}
+          execSync(
+            `useradd -u ${config.uid} -g ${config.gid} -m -s /bin/bash ${config.user} 2>/dev/null || useradd -u ${config.uid} -m -s /bin/bash ${config.user}`,
+            { stdio: 'ignore' }
+          );
+        } else if (!status.uidMatches || !status.gidMatches) {
+          try {
+            execSync(`groupmod -g ${config.gid} ${config.user} 2>/dev/null || true`, { stdio: 'ignore' });
+          } catch {}
+          execSync(`usermod -u ${config.uid} -g ${config.gid} ${config.user} 2>/dev/null || true`, { stdio: 'ignore' });
+        }
+        const updated = verifySandboxIdentity();
+        return updated.valid;
       } catch {
         return false;
       }
     }
-    return false;
+    return status.valid;
   } catch {
     return false;
   }
@@ -91,7 +266,14 @@ export function ensureSandboxDirectory(): boolean {
   try {
     const dir = '/tmp/sandboxes';
     if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true, mode: 0o777 });
+      fs.mkdirSync(dir, { recursive: true, mode: 0o711 });
+    }
+    const isRoot = process.getuid ? process.getuid() === 0 : false;
+    if (isRoot) {
+      try {
+        fs.chownSync(dir, 0, 0);
+        fs.chmodSync(dir, 0o711);
+      } catch {}
     }
     fs.accessSync(dir, fs.constants.R_OK | fs.constants.W_OK);
     return true;
@@ -183,6 +365,8 @@ export function resolveJdkEnvironment(forceRefresh = false): JdkEnvironmentInfo 
   }
 
   // Ensure sandbox user is ready
+  const sandboxConfig = getSandboxConfig();
+  const sandboxIdentity = verifySandboxIdentity();
   const sandboxUserExists = ensureSandboxUser();
 
   // Try locating javac and java
@@ -208,6 +392,8 @@ export function resolveJdkEnvironment(forceRefresh = false): JdkEnvironmentInfo 
       isJdk21: false,
       isolationAvailable: false,
       sandboxUserExists,
+      sandboxConfig,
+      sandboxIdentity,
       error: 'CRITICAL: Java Development Kit compiler (javac) is not found. An OpenJDK 21 JDK is required to compile participant code.',
     };
     return cachedJdkInfo;
@@ -225,6 +411,8 @@ export function resolveJdkEnvironment(forceRefresh = false): JdkEnvironmentInfo 
       isJdk21: false,
       isolationAvailable: false,
       sandboxUserExists,
+      sandboxConfig,
+      sandboxIdentity,
       error: 'CRITICAL: Java runtime (java) is not found in the environment.',
     };
     return cachedJdkInfo;
@@ -273,9 +461,9 @@ export function resolveJdkEnvironment(forceRefresh = false): JdkEnvironmentInfo 
             '--mount-proc',
             'setpriv',
             '--reuid',
-            '1001',
+            String(sandboxConfig.uid),
             '--regid',
-            '1001',
+            String(sandboxConfig.gid),
             '--clear-groups',
             '--no-new-privs',
             'true',
@@ -302,6 +490,8 @@ export function resolveJdkEnvironment(forceRefresh = false): JdkEnvironmentInfo 
     isJdk21,
     isolationAvailable,
     sandboxUserExists,
+    sandboxConfig,
+    sandboxIdentity,
   };
 
   return cachedJdkInfo;
@@ -315,6 +505,8 @@ export function resolveJdkEnvironment(forceRefresh = false): JdkEnvironmentInfo 
 export function verifyExecutionEnvironmentOrThrow(): JdkEnvironmentInfo {
   const info = resolveJdkEnvironment(true);
   const isProduction = process.env.NODE_ENV === 'production';
+  const config = getSandboxConfig();
+  const identity = verifySandboxIdentity();
   const hasSandboxDir = ensureSandboxDirectory();
 
   if (!info.isAvailable) {
@@ -338,11 +530,20 @@ export function verifyExecutionEnvironmentOrThrow(): JdkEnvironmentInfo {
     if (!hasSetpriv) {
       throw new Error('CRITICAL SANDBOX PREFLIGHT ERROR: /usr/bin/setpriv utility is missing. Non-root unprivileged sandbox execution is mandatory.');
     }
-    if (!info.sandboxUserExists) {
-      throw new Error('CRITICAL SANDBOX PREFLIGHT ERROR: Unprivileged sandbox user (UID 1001) does not exist in the system.');
+    if (!identity.userExists) {
+      throw new Error(`CRITICAL SANDBOX PREFLIGHT ERROR: Configured sandbox user "${config.user}" does not exist in the system.`);
     }
-    if (!hasSandboxDir) {
-      throw new Error('CRITICAL SANDBOX PREFLIGHT ERROR: /tmp/sandboxes directory is inaccessible or cannot be created with safe permissions.');
+    if (!identity.uidMatches) {
+      throw new Error(`CRITICAL SANDBOX PREFLIGHT ERROR: Sandbox user "${config.user}" UID mismatch: expected ${config.uid}, found ${identity.actualUid}.`);
+    }
+    if (!identity.gidMatches) {
+      throw new Error(`CRITICAL SANDBOX PREFLIGHT ERROR: Sandbox user "${config.user}" GID mismatch: expected ${config.gid}, found ${identity.actualGid}.`);
+    }
+    if (!identity.directoryExists) {
+      throw new Error('CRITICAL SANDBOX PREFLIGHT ERROR: /tmp/sandboxes directory does not exist or is not a directory.');
+    }
+    if (!identity.directoryWritable) {
+      throw new Error('CRITICAL SANDBOX PREFLIGHT ERROR: /tmp/sandboxes directory is inaccessible or cannot be written to.');
     }
   }
 
@@ -352,7 +553,7 @@ export function verifyExecutionEnvironmentOrThrow(): JdkEnvironmentInfo {
   console.log(`  • javac binary:     ${info.javacPath} (${info.javacVersion})`);
   console.log(`  • java runtime:     ${info.javaPath} (${info.javaVersion})`);
   console.log(`  • OpenJDK 21 LTS:   ${info.isJdk21 ? 'CONFIRMED' : 'WARNING (version: ' + info.majorVersion + ')'}`);
-  console.log(`  • Sandbox Security: UID 1001 (sandbox: ${info.sandboxUserExists ? 'READY' : 'MISSING'}), unshare isolation: ${info.isolationAvailable ? 'ACTIVE' : 'FALLBACK'}`);
+  console.log(`  • Sandbox Security: UID ${config.uid}:${config.gid} (${config.user}: ${identity.valid ? 'READY' : 'MISCONFIGURED'}), unshare isolation: ${info.isolationAvailable ? 'ACTIVE' : 'FALLBACK'}`);
   console.log(`  • Sandbox Dir:      /tmp/sandboxes (${hasSandboxDir ? 'READY' : 'ERROR'})`);
   console.log('----------------------------------------------------------------');
 

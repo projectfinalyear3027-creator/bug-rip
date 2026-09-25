@@ -6,7 +6,7 @@
  * - Automatic guaranteed workspace cleanup in finally block
  * - Stripped, minimal environment (PATH, JAVA_HOME, LANG=C.UTF-8 only; NO application secrets)
  * - Linux network namespace isolation (unshare -n) blocking all LAN/WAN and loopback access
- * - Non-root sandbox user execution (UID 1001)
+ * - Non-root sandbox user execution (configurable SANDBOX_USER, SANDBOX_UID, SANDBOX_GID)
  * - JVM resource constraints (-Xmx256m, -Xms32m, -XX:+CrashOnOutOfMemoryError, -XX:ActiveProcessorCount=1)
  * - Strict watchdog timer (kills entire process group on timeout)
  * - Real-time 64KB output ceiling (kills process immediately upon overflow, returns OUTPUT_LIMIT)
@@ -19,7 +19,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { spawn, ChildProcess } from 'child_process';
 import { ExecutionJobPayload, ExecutionResult, SubmissionExecutionStatus } from './types';
-import { resolveJdkEnvironment } from './jdkEnvironment';
+import { resolveJdkEnvironment, getSandboxConfig } from './jdkEnvironment';
 
 export const MAX_SOURCE_CODE_BYTES = 50000;
 export const DEFAULT_EXECUTION_TIMEOUT_MS = 3000;
@@ -170,9 +170,9 @@ export class IsolatedJavaSandbox {
     const canUseSandboxUser = await this.isIsolationSupported();
     if (canUseSandboxUser) {
       try {
-        // UID 1001, GID 1001
-        fs.chownSync(workspaceDir, 1001, 1001);
-        fs.chownSync(sourceFilePath, 1001, 1001);
+        const sandboxConfig = getSandboxConfig();
+        fs.chownSync(workspaceDir, sandboxConfig.uid, sandboxConfig.gid);
+        fs.chownSync(sourceFilePath, sandboxConfig.uid, sandboxConfig.gid);
       } catch {
         // If non-root and chown not permitted, open permissions on this specific workspace
         try {
@@ -366,7 +366,8 @@ export class IsolatedJavaSandbox {
       let finalArgs = options.args;
 
       if (options.useIsolation) {
-        // unshare -n -p -f --mount-proc setpriv --reuid 1001 --regid 1001 --clear-groups --no-new-privs <command> <args>
+        // unshare -n -p -f --mount-proc setpriv --reuid <UID> --regid <GID> --clear-groups --no-new-privs <command> <args>
+        const sandboxConfig = getSandboxConfig();
         executable = 'unshare';
         finalArgs = [
           '-n',
@@ -375,9 +376,9 @@ export class IsolatedJavaSandbox {
           '--mount-proc',
           'setpriv',
           '--reuid',
-          '1001',
+          String(sandboxConfig.uid),
           '--regid',
-          '1001',
+          String(sandboxConfig.gid),
           '--clear-groups',
           '--no-new-privs',
           options.command,
