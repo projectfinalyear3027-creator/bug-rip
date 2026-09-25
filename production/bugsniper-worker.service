@@ -23,10 +23,10 @@ KillMode=mixed
 TimeoutStopSec=30
 
 # Hardened Linux Sandbox Capabilities:
-# Only the minimal ambient capabilities strictly required for Linux namespace isolation (unshare)
-# and privilege dropping to unprivileged sandbox user (setpriv, default UID/GID 2001)
-AmbientCapabilities=CAP_SYS_ADMIN CAP_SETUID CAP_SETGID
-CapabilityBoundingSet=CAP_SYS_ADMIN CAP_SETUID CAP_SETGID
+# Only the minimal ambient capabilities strictly required for Linux namespace isolation (unshare),
+# privilege dropping to unprivileged sandbox user (setpriv, default UID/GID 2001), and workspace chown
+AmbientCapabilities=CAP_SYS_ADMIN CAP_SETUID CAP_SETGID CAP_CHOWN
+CapabilityBoundingSet=CAP_SYS_ADMIN CAP_SETUID CAP_SETGID CAP_CHOWN
 
 # Filesystem protections while preserving access to ephemeral sandboxes
 ProtectSystem=full

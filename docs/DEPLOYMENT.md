@@ -54,7 +54,7 @@ sudo useradd -r -s /usr/sbin/nologin -d /opt/bugsniper bugsniper
 ### B. Dedicated Worker Service Account (`bugsniper-worker`)
 ```bash
 # System user for running the execution worker daemon
-# Granted only the specific ambient capabilities required for unshare/setpriv
+# Granted only the specific ambient capabilities required for unshare, setpriv, and chown (CAP_SYS_ADMIN, CAP_SETUID, CAP_SETGID, CAP_CHOWN)
 sudo useradd -r -s /usr/sbin/nologin -d /opt/bugsniper bugsniper-worker
 ```
 
@@ -76,10 +76,10 @@ sudo useradd -u 2001 -g 2001 -m -s /bin/bash sandbox
 ```bash
 # Create the ephemeral sandbox base directory
 sudo mkdir -p /tmp/sandboxes
-sudo chown 2001:2001 /tmp/sandboxes
-sudo chmod 1777 /tmp/sandboxes
+sudo chown bugsniper-worker:bugsniper-worker /tmp/sandboxes
+sudo chmod 711 /tmp/sandboxes
 ```
-`mode 1777` (sticky bit) allows the `bugsniper-worker` service account and the `sandbox` (UID 2001) execution user to read, write, and clean up ephemeral job workspaces without permission collisions. The public web process (`bugsniper`) does not interact with this directory.
+`mode 711` (`rwx--x--x`) ensures the `bugsniper-worker` daemon owns the base directory with full read/write access to create ephemeral execution workspaces (`/tmp/sandboxes/exec-<UUID>`), which it then chowns to `SANDBOX_UID=2001`. The unprivileged `sandbox` user only receives execute (`+x`) permission on the parent directory to traverse directly into its assigned workspace, strictly denying directory listing and denying write access to the parent `/tmp/sandboxes` directory.
 
 ---
 
@@ -106,7 +106,7 @@ The system validates these 7 primitives at startup in production. If any primiti
 4. `unshare` binary available (`/usr/bin/unshare` for network namespace isolation)
 5. `setpriv` binary available (`/usr/bin/setpriv` for privilege dropping to configured `SANDBOX_UID`)
 6. Sandbox user exists and matches configured UID/GID (`id -u $SANDBOX_USER` returns `$SANDBOX_UID`, default 2001)
-7. `/tmp/sandboxes` exists, is writable, and has safe permissions (`1777`)
+7. `/tmp/sandboxes` exists, is owned by `bugsniper-worker:bugsniper-worker`, and has secure traversal permissions (`711`)
 
 ---
 
@@ -224,7 +224,7 @@ sudo systemctl start bugsniper-web
 ```
 
 ### B. Install and Start the Worker Tier Service
-`bugsniper-worker.service` runs the standalone worker daemon under user `bugsniper-worker` with **ambient capabilities** strictly scoped to Linux namespace isolation and setpriv unprivileged execution:
+`bugsniper-worker.service` runs the standalone worker daemon under user `bugsniper-worker` with **ambient capabilities** strictly scoped to Linux namespace isolation, setpriv unprivileged execution, and workspace chown (`CAP_SYS_ADMIN CAP_SETUID CAP_SETGID CAP_CHOWN`):
 ```bash
 sudo cp production/bugsniper-worker.service /etc/systemd/system/bugsniper-worker.service
 sudo systemctl daemon-reload

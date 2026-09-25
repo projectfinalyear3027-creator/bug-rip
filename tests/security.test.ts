@@ -74,6 +74,10 @@ async function runSecuritySuite() {
   }
   assert(caughtForceError, 'Production rejects explicit in-memory flag');
 
+  // Clean up queue connections and reconnect timers
+  await devQueue.close();
+  await prodQueue.close();
+
   // Restore env
   process.env.NODE_ENV = 'development';
   delete process.env.EXECUTION_IN_MEMORY;
@@ -362,9 +366,14 @@ public class Main {
   if (testsFailed > 0) {
     process.exit(1);
   }
+  process.exit(0);
 }
 
-runSecuritySuite().catch((err) => {
-  console.error('Fatal security test error:', err);
-  process.exit(1);
-});
+runSecuritySuite()
+  .then(() => {
+    process.exit(0);
+  })
+  .catch((err) => {
+    console.error('Fatal security test error:', err);
+    process.exit(1);
+  });
