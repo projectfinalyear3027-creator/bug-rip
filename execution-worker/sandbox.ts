@@ -38,6 +38,39 @@ export class IsolatedJavaSandbox {
   private static hasUnshareAndSandboxUser: boolean | null = null;
 
   /**
+   * Clean up stale BUG SNIPER execution workspaces older than maxAgeMs (default: 10 minutes).
+   * Conservative: ONLY deletes directories strictly matching /tmp/sandboxes/exec-<UUID>.
+   */
+  public static cleanupStaleWorkspaces(maxAgeMs: number = 10 * 60 * 1000): number {
+    let cleanedCount = 0;
+    try {
+      if (!fs.existsSync(this.sandboxBaseDir)) return 0;
+      const entries = fs.readdirSync(this.sandboxBaseDir);
+      const now = Date.now();
+
+      for (const entry of entries) {
+        if (!/^exec-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(entry)) {
+          continue;
+        }
+
+        const fullPath = path.join(this.sandboxBaseDir, entry);
+        try {
+          const stats = fs.statSync(fullPath);
+          if (stats.isDirectory() && now - stats.mtimeMs >= maxAgeMs) {
+            fs.rmSync(fullPath, { recursive: true, force: true });
+            cleanedCount++;
+          }
+        } catch {
+          // Non-fatal for individual entry
+        }
+      }
+    } catch {
+      // Safe fallback
+    }
+    return cleanedCount;
+  }
+
+  /**
    * Check if network namespace isolation and unprivileged sandbox user are supported
    */
   public static async isIsolationSupported(): Promise<boolean> {
@@ -156,41 +189,43 @@ export class IsolatedJavaSandbox {
       } catch {}
     }
 
-    const uniqueId = `exec-${crypto.randomUUID()}`;
-    const workspaceDir = path.join(this.sandboxBaseDir, uniqueId);
-    fs.mkdirSync(workspaceDir, { recursive: true, mode: 0o711 });
+    let workspaceDir: string | null = null;
+
     try {
-      fs.chmodSync(workspaceDir, 0o711);
-    } catch {}
-
-    const sourceFilePath = path.join(workspaceDir, `${mainClassName}.java`);
-    fs.writeFileSync(sourceFilePath, rawSource, 'utf8');
-
-    // Chown to sandbox:sandbox if running as root or capable
-    const canUseSandboxUser = await this.isIsolationSupported();
-    if (canUseSandboxUser) {
+      const uniqueId = `exec-${crypto.randomUUID()}`;
+      workspaceDir = path.join(this.sandboxBaseDir, uniqueId);
+      fs.mkdirSync(workspaceDir, { recursive: true, mode: 0o711 });
       try {
-        const sandboxConfig = getSandboxConfig();
-        fs.chownSync(workspaceDir, sandboxConfig.uid, sandboxConfig.gid);
-        fs.chownSync(sourceFilePath, sandboxConfig.uid, sandboxConfig.gid);
-      } catch {
-        // If non-root and chown not permitted, open permissions on this specific workspace
+        fs.chmodSync(workspaceDir, 0o711);
+      } catch {}
+
+      const sourceFilePath = path.join(workspaceDir, `${mainClassName}.java`);
+      fs.writeFileSync(sourceFilePath, rawSource, 'utf8');
+
+      // Chown to sandbox:sandbox if running as root or capable
+      const canUseSandboxUser = await this.isIsolationSupported();
+      if (canUseSandboxUser) {
         try {
-          fs.chmodSync(workspaceDir, 0o777);
-          fs.chmodSync(sourceFilePath, 0o666);
-        } catch {}
+          const sandboxConfig = getSandboxConfig();
+          fs.chownSync(workspaceDir, sandboxConfig.uid, sandboxConfig.gid);
+          fs.chownSync(sourceFilePath, sandboxConfig.uid, sandboxConfig.gid);
+        } catch {
+          // If non-root and chown not permitted, open permissions on this specific workspace
+          try {
+            fs.chmodSync(workspaceDir, 0o777);
+            fs.chmodSync(sourceFilePath, 0o666);
+          } catch {}
+        }
       }
-    }
 
-    // Sanitized Minimal Environment (NO SECRETS!)
-    const minimalEnv: Record<string, string> = {
-      PATH: `${jdk.javaHome}/bin:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin`,
-      JAVA_HOME: jdk.javaHome,
-      LANG: 'C.UTF-8',
-      LC_ALL: 'C.UTF-8',
-    };
+      // Sanitized Minimal Environment (NO SECRETS!)
+      const minimalEnv: Record<string, string> = {
+        PATH: `${jdk.javaHome}/bin:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin`,
+        JAVA_HOME: jdk.javaHome,
+        LANG: 'C.UTF-8',
+        LC_ALL: 'C.UTF-8',
+      };
 
-    try {
       // 3. Compile Step (javac) - Run under sandbox user with network isolation
       const compileResult = await this.runCommand({
         command: jdk.javacPath || 'javac',
@@ -322,7 +357,7 @@ export class IsolatedJavaSandbox {
     } finally {
       // 6. Ephemeral Workspace Cleanup
       try {
-        if (fs.existsSync(workspaceDir)) {
+        if (workspaceDir && fs.existsSync(workspaceDir)) {
           fs.rmSync(workspaceDir, { recursive: true, force: true });
         }
       } catch {
@@ -405,6 +440,52 @@ export class IsolatedJavaSandbox {
         child.stdin.end();
       }
 
+      let killed = false;
+      const killProcessGroup = (signal: NodeJS.Signals = 'SIGKILL') => {
+        if (!child.pid) return;
+        const pid = child.pid;
+
+        // 1. Process group termination using negative PID
+        try {
+          process.kill(-pid, signal);
+        } catch (err: any) {
+          if (err?.code === 'ESRCH') {
+            // ESRCH indicates the process or process group has already exited
+          } else if (err?.code === 'EPERM') {
+            console.error(
+              `[Sandbox:killProcessGroup] EPERM: Permission denied sending ${signal} to process group -${pid}. ` +
+              `Worker capability CAP_KILL required: errno=${err?.errno}, message=${err?.message}`
+            );
+          } else {
+            console.error(
+              `[Sandbox:killProcessGroup] Unexpected failure sending ${signal} to process group -${pid}: ` +
+              `code=${err?.code || 'UNKNOWN'}, errno=${err?.errno}, message=${err?.message}`
+            );
+          }
+        }
+
+        // 2. Direct child process termination
+        try {
+          child.kill(signal);
+        } catch (err: any) {
+          if (err?.code !== 'ESRCH' && err?.code !== 'EPERM') {
+            console.error(
+              `[Sandbox:killProcessGroup] Direct child kill failed for pid ${pid} with ${signal}: ` +
+              `code=${err?.code || 'UNKNOWN'}, errno=${err?.errno}, message=${err?.message}`
+            );
+          }
+        }
+      };
+
+      const executeFullCleanup = () => {
+        if (killed) return;
+        killed = true;
+        // First try SIGTERM on group, then escalate to SIGKILL
+        killProcessGroup('SIGTERM');
+        // Immediate escalation to SIGKILL to guarantee no runaway execution
+        killProcessGroup('SIGKILL');
+      };
+
       // Output stream monitors
       const onData = (chunk: Buffer, isStderr: boolean) => {
         if (settled) return;
@@ -413,7 +494,7 @@ export class IsolatedJavaSandbox {
 
         if (totalOutputBytes > options.maxOutputBytes) {
           outputLimitExceeded = true;
-          killProcessGroup();
+          executeFullCleanup();
           return;
         }
 
@@ -428,32 +509,18 @@ export class IsolatedJavaSandbox {
       child.stdout?.on('data', (chunk) => onData(chunk, false));
       child.stderr?.on('data', (chunk) => onData(chunk, true));
 
-      const killProcessGroup = () => {
-        if (!child.pid) return;
-        try {
-          // Kill process group
-          process.kill(-child.pid, 'SIGKILL');
-        } catch {
-          try {
-            child.kill('SIGKILL');
-          } catch {
-            // Already dead
-          }
-        }
-      };
-
       // Watchdog timeout timer
       const timer = setTimeout(() => {
         if (settled) return;
         timedOut = true;
-        killProcessGroup();
+        executeFullCleanup();
       }, options.timeoutMs);
 
       const cleanupAndResolve = (code: number | null) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        killProcessGroup();
+        executeFullCleanup();
 
         const durationMs = Date.now() - startTime;
         resolve({

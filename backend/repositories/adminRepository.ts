@@ -1409,6 +1409,28 @@ export class AdminRepository {
             matchNumber: nextMatchNumber,
             matchName,
           });
+          teamRealtimeService.broadcastToAdmin('match.reset', {
+            matchNumber: nextMatchNumber,
+            matchName,
+            matchId: newMatch.id,
+            timestamp: now.toISOString(),
+          });
+          teamRealtimeService.broadcastToAdmin('admin.match.reset', {
+            matchNumber: nextMatchNumber,
+            matchName,
+            matchId: newMatch.id,
+            timestamp: now.toISOString(),
+          });
+          teamRealtimeService.broadcastToAdmin('event.status.changed', {
+            status: 'NOT_STARTED',
+            matchNumber: nextMatchNumber,
+            matchName,
+            timestamp: now.toISOString(),
+          });
+          teamRealtimeService.broadcastToAdmin('admin.metrics.updated', {
+            matchNumber: nextMatchNumber,
+            timestamp: now.toISOString(),
+          });
           leaderboardRealtimeService.broadcastEventStatusChanged({
             status: 'NOT_STARTED',
             remainingSeconds: durationMinutes * 60,

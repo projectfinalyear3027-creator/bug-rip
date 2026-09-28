@@ -236,6 +236,7 @@ export class AntiCheatRepository {
           eventType: inserted.eventType,
           actionTaken: inserted.actionTaken,
           matchNumber: inserted.matchNumber,
+          matchId: inserted.matchId,
           createdAt: inserted.createdAt,
         },
       });
@@ -289,7 +290,7 @@ export class AntiCheatRepository {
     if (options.actionTaken) {
       conditions.push(eq(antiCheatEvents.actionTaken, options.actionTaken as any));
     }
-    if (options.matchNumber !== undefined) {
+    if (options.matchNumber !== undefined && !isNaN(options.matchNumber)) {
       conditions.push(eq(antiCheatEvents.matchNumber, options.matchNumber));
     }
 
@@ -375,7 +376,7 @@ export class AntiCheatRepository {
     if (options.actionTaken) {
       conditions.push(eq(antiCheatEvents.actionTaken, options.actionTaken as any));
     }
-    if (options.matchNumber !== undefined) {
+    if (options.matchNumber !== undefined && !isNaN(options.matchNumber)) {
       conditions.push(eq(antiCheatEvents.matchNumber, options.matchNumber));
     }
 
@@ -404,7 +405,7 @@ export class AntiCheatRepository {
     recentIncidentsCount: number;
   }> {
     const conditions = [];
-    if (options?.matchNumber !== undefined) {
+    if (options?.matchNumber !== undefined && !isNaN(options.matchNumber)) {
       conditions.push(eq(antiCheatEvents.matchNumber, options.matchNumber));
     }
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
@@ -452,7 +453,7 @@ export class AntiCheatRepository {
   /**
    * Get team-specific summary and incident list.
    */
-  async getTeamSummary(teamId: string): Promise<{
+  async getTeamSummary(teamId: string, options?: { matchNumber?: number }): Promise<{
     teamId: string;
     totalEvents: number;
     violationsCount: number;
@@ -460,7 +461,7 @@ export class AntiCheatRepository {
     latestEvent: AntiCheatEventRecord | null;
     recentEvents: AntiCheatEventRecord[];
   }> {
-    const recentEvents = await this.getEvents({ teamId, limit: 100 });
+    const recentEvents = await this.getEvents({ teamId, matchNumber: options?.matchNumber, limit: 100 });
     const breakdownByType: Record<string, number> = {};
     let violationsCount = 0;
 
@@ -531,7 +532,7 @@ export class AntiCheatRepository {
   /**
    * Get teams ranked by violation count.
    */
-  async getTeamsByViolations(): Promise<
+  async getTeamsByViolations(options?: { matchNumber?: number }): Promise<
     Array<{
       teamId: string;
       teamName: string;
@@ -546,6 +547,12 @@ export class AntiCheatRepository {
       latestEventAt: string | null;
     }>
   > {
+    const conditions = [];
+    if (options?.matchNumber !== undefined && !isNaN(options.matchNumber)) {
+      conditions.push(eq(antiCheatEvents.matchNumber, options.matchNumber));
+    }
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
     const events = await db
       .select({
         teamId: antiCheatEvents.teamId,
@@ -559,7 +566,8 @@ export class AntiCheatRepository {
       })
       .from(antiCheatEvents)
       .leftJoin(teams, eq(antiCheatEvents.teamId, teams.id))
-      .leftJoin(participants, eq(antiCheatEvents.participantId, participants.id));
+      .leftJoin(participants, eq(antiCheatEvents.participantId, participants.id))
+      .where(whereClause);
 
     const map = new Map<
       string,

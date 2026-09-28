@@ -118,6 +118,7 @@ export const AdminParticipants: React.FC = () => {
   // Registration Stats State
   const [regStats, setRegStats] = useState<RegistrationStats | null>(null);
   const [loadingStats, setLoadingStats] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
   // CSV Import State
   const [csvContent, setCsvContent] = useState('');
@@ -142,9 +143,11 @@ export const AdminParticipants: React.FC = () => {
             setRegStats(data.stats);
           }
         }
+      } else if (res.status === 401) {
+        setFetchError('Admin authentication required or session expired.');
       }
-    } catch (err) {
-      console.error('Failed to load registration statistics:', err);
+    } catch (err: any) {
+      console.warn('Unable to load registration statistics (server may be booting):', err?.message || err);
     } finally {
       setLoadingStats(false);
     }
@@ -160,11 +163,17 @@ export const AdminParticipants: React.FC = () => {
           if (data && Array.isArray(data.participants)) {
             setParticipants(data.participants);
             setLastRefreshed(new Date());
+            setFetchError(null);
           }
         }
+      } else if (res.status === 401) {
+        setFetchError('Admin authentication required or session expired.');
+      } else {
+        setFetchError(`Failed to load participants (HTTP ${res.status}).`);
       }
-    } catch (err) {
-      console.error('Failed to load participants:', err);
+    } catch (err: any) {
+      console.warn('Unable to load participants (server may be booting):', err?.message || err);
+      setFetchError('Connection to server currently unavailable. Retrying...');
     } finally {
       setLoadingParticipants(false);
     }
@@ -858,9 +867,25 @@ export const AdminParticipants: React.FC = () => {
                 {filtered.length === 0 ? (
                   <tr>
                     <td colSpan={8} className="py-8 text-center text-zinc-500">
-                      {loadingParticipants
-                        ? 'Loading competitors from database...'
-                        : `No ${statusFilter === 'ALL' ? '' : statusFilter.toLowerCase() + ' '}registered competitors found.`}
+                      {loadingParticipants ? (
+                        'Loading competitors from database...'
+                      ) : fetchError ? (
+                        <div className="flex flex-col items-center justify-center gap-2">
+                          <span className="text-amber-400 text-sm font-medium">{fetchError}</span>
+                          <button
+                            onClick={() => {
+                              setLoadingParticipants(true);
+                              fetchParticipants();
+                              fetchStats();
+                            }}
+                            className="inline-flex items-center gap-1.5 px-3 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded text-xs transition border border-zinc-700"
+                          >
+                            <RefreshCw className="w-3 h-3" /> Retry Connection
+                          </button>
+                        </div>
+                      ) : (
+                        `No ${statusFilter === 'ALL' ? '' : statusFilter.toLowerCase() + ' '}registered competitors found.`
+                      )}
                     </td>
                   </tr>
                 ) : (

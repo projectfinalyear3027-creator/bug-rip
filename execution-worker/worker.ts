@@ -16,6 +16,7 @@ import { verifyExecutionEnvironmentOrThrow } from './jdkEnvironment';
 export class ExecutionWorkerService {
   private workerId: string;
   private isRunning: boolean = false;
+  private cleanupIntervalTimer: NodeJS.Timeout | null = null;
 
   constructor(workerId = `worker-${process.pid || 1}`) {
     this.workerId = workerId;
@@ -30,6 +31,26 @@ export class ExecutionWorkerService {
 
     // Diagnostics: Verify OpenJDK 21 compiler and runtime environment
     verifyExecutionEnvironmentOrThrow();
+
+    // Conservative startup cleanup: clean any stale workspaces left by previous crashed runs
+    try {
+      const purged = IsolatedJavaSandbox.cleanupStaleWorkspaces(10 * 60 * 1000);
+      if (purged > 0) {
+        console.log(`[ExecutionWorker] Startup cleanup purged ${purged} stale execution workspace(s).`);
+      }
+    } catch {
+      // Safe non-blocking startup
+    }
+
+    // Schedule periodic conservative background sweep every 15 minutes (older than 10 mins)
+    this.cleanupIntervalTimer = setInterval(() => {
+      try {
+        IsolatedJavaSandbox.cleanupStaleWorkspaces(10 * 60 * 1000);
+      } catch {}
+    }, 15 * 60 * 1000);
+    if (this.cleanupIntervalTimer.unref) {
+      this.cleanupIntervalTimer.unref();
+    }
 
     await executionQueue.initialize();
 
@@ -142,6 +163,10 @@ export class ExecutionWorkerService {
    */
   public async stop(): Promise<void> {
     this.isRunning = false;
+    if (this.cleanupIntervalTimer) {
+      clearInterval(this.cleanupIntervalTimer);
+      this.cleanupIntervalTimer = null;
+    }
     await executionQueue.close();
     console.log(`[ExecutionWorker] ${this.workerId} stopped.`);
   }

@@ -1508,20 +1508,32 @@ adminRouter.post('/progression/unlock-challenge', requireAdmin, async (req: Requ
 /**
  * 26. Admin: Query Anti-Cheat Events
  * GET /api/admin/anti-cheat/events
- * Query: { teamId, eventType, actionTaken, limit, offset }
+ * Query: { teamId, eventType, actionTaken, limit, offset, matchNumber, allMatches }
  */
 adminRouter.get('/anti-cheat/events', requireAdmin, async (req: Request, res: Response) => {
   try {
-    const { teamId, eventType, actionTaken, limit, offset } = req.query;
+    const { teamId, eventType, actionTaken, limit, offset, matchNumber, allMatches } = req.query;
 
     const parsedLimit = limit ? parseInt(limit as string, 10) : 50;
     const parsedOffset = offset ? parseInt(offset as string, 10) : 0;
+
+    let targetMatchNumber: number | undefined = undefined;
+    if (typeof matchNumber === 'string' && matchNumber !== '' && matchNumber !== 'all') {
+      const parsed = parseInt(matchNumber, 10);
+      if (!isNaN(parsed)) {
+        targetMatchNumber = parsed;
+      }
+    } else if (allMatches !== 'true' && matchNumber !== 'all') {
+      const settings = await eventRepository.getEventSettings();
+      targetMatchNumber = settings?.currentMatchNumber || 1;
+    }
 
     const [events, total] = await Promise.all([
       antiCheatRepository.getEvents({
         teamId: typeof teamId === 'string' && teamId ? teamId : undefined,
         eventType: typeof eventType === 'string' && eventType ? eventType : undefined,
         actionTaken: typeof actionTaken === 'string' && actionTaken ? actionTaken : undefined,
+        matchNumber: targetMatchNumber,
         limit: parsedLimit,
         offset: parsedOffset,
       }),
@@ -1529,6 +1541,7 @@ adminRouter.get('/anti-cheat/events', requireAdmin, async (req: Request, res: Re
         teamId: typeof teamId === 'string' && teamId ? teamId : undefined,
         eventType: typeof eventType === 'string' && eventType ? eventType : undefined,
         actionTaken: typeof actionTaken === 'string' && actionTaken ? actionTaken : undefined,
+        matchNumber: targetMatchNumber,
       }),
     ]);
 
@@ -1539,6 +1552,7 @@ adminRouter.get('/anti-cheat/events', requireAdmin, async (req: Request, res: Re
         total,
         limit: parsedLimit,
         offset: parsedOffset,
+        matchNumber: targetMatchNumber,
       },
     });
   } catch (err) {
@@ -1553,12 +1567,26 @@ adminRouter.get('/anti-cheat/events', requireAdmin, async (req: Request, res: Re
 /**
  * 27. Admin: Anti-Cheat Summary Statistics & High-Risk Teams
  * GET /api/admin/anti-cheat/summary
+ * Query: { matchNumber, allMatches }
  */
 adminRouter.get('/anti-cheat/summary', requireAdmin, async (req: Request, res: Response) => {
   try {
+    const { matchNumber, allMatches } = req.query;
+
+    let targetMatchNumber: number | undefined = undefined;
+    if (typeof matchNumber === 'string' && matchNumber !== '' && matchNumber !== 'all') {
+      const parsed = parseInt(matchNumber as string, 10);
+      if (!isNaN(parsed)) {
+        targetMatchNumber = parsed;
+      }
+    } else if (allMatches !== 'true' && matchNumber !== 'all') {
+      const settings = await eventRepository.getEventSettings();
+      targetMatchNumber = settings?.currentMatchNumber || 1;
+    }
+
     const [stats, teamsByViolations] = await Promise.all([
-      antiCheatRepository.getSummaryStats(),
-      antiCheatRepository.getTeamsByViolations(),
+      antiCheatRepository.getSummaryStats({ matchNumber: targetMatchNumber }),
+      antiCheatRepository.getTeamsByViolations({ matchNumber: targetMatchNumber }),
     ]);
 
     return res.json({
@@ -1566,6 +1594,7 @@ adminRouter.get('/anti-cheat/summary', requireAdmin, async (req: Request, res: R
       data: {
         stats,
         teams: teamsByViolations,
+        matchNumber: targetMatchNumber,
       },
     });
   } catch (err) {
@@ -1580,15 +1609,32 @@ adminRouter.get('/anti-cheat/summary', requireAdmin, async (req: Request, res: R
 /**
  * 28. Admin: Team-Specific Anti-Cheat Timeline
  * GET /api/admin/anti-cheat/teams/:teamId
+ * Query: { matchNumber, allMatches }
  */
 adminRouter.get('/anti-cheat/teams/:teamId', requireAdmin, async (req: Request, res: Response) => {
   try {
     const { teamId } = req.params;
-    const summary = await antiCheatRepository.getTeamSummary(teamId);
+    const { matchNumber, allMatches } = req.query;
+
+    let targetMatchNumber: number | undefined = undefined;
+    if (typeof matchNumber === 'string' && matchNumber !== '' && matchNumber !== 'all') {
+      const parsed = parseInt(matchNumber as string, 10);
+      if (!isNaN(parsed)) {
+        targetMatchNumber = parsed;
+      }
+    } else if (allMatches !== 'true' && matchNumber !== 'all') {
+      const settings = await eventRepository.getEventSettings();
+      targetMatchNumber = settings?.currentMatchNumber || 1;
+    }
+
+    const summary = await antiCheatRepository.getTeamSummary(teamId, { matchNumber: targetMatchNumber });
 
     return res.json({
       success: true,
-      data: summary,
+      data: {
+        ...summary,
+        matchNumber: targetMatchNumber,
+      },
     });
   } catch (err) {
     console.error('Failed to fetch team anti-cheat timeline:', err);

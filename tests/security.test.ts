@@ -15,6 +15,7 @@ process.env.PG_MEM = 'true';
 import { IsolatedJavaSandbox } from '../execution-worker/sandbox.ts';
 import { ExecutionQueueManager } from '../execution-worker/queue.ts';
 import fs from 'fs';
+import path from 'path';
 import { execSync } from 'child_process';
 
 let testsPassed = 0;
@@ -308,6 +309,64 @@ public class Main {
   const survivingSleep = execSync('ps aux | grep "sleep 77" | grep -v grep || true').toString().trim();
   assert(survivingSleep === '', `No surviving orphan process detected (found: ${survivingSleep || 'none'})`);
 
+  // Regression Test: Worker ability to signal/terminate process running as sandbox UID (UID 2001)
+  // and guarantee timed-out Java process does NOT remain alive after execution
+  const timeoutTargetToken = 'BUG_SNIPER_TIMEOUT_PROBE_' + Math.random().toString(36).substring(7);
+  const timeoutLoopCode = `
+public class Main {
+    public static void main(String[] args) throws Exception {
+        // Tag thread/process name for unambiguous detection in process table
+        System.out.println("${timeoutTargetToken}_RUNNING");
+        System.out.flush();
+        long sum = 0;
+        while (true) {
+            sum++;
+            if (sum % 1000000 == 0) {
+                Thread.sleep(1);
+            }
+        }
+    }
+}
+`;
+
+  const timeoutTestStart = Date.now();
+  const timeoutProcRes = await IsolatedJavaSandbox.execute({
+    jobId: 'sec-timeout-orphan-test',
+    submissionId: 'sec-timeout-orphan-test',
+    teamId: 'team-sec',
+    challengeId: 'c1',
+    submittedJavaSource: timeoutLoopCode,
+    submittedAt: new Date().toISOString(),
+  }, { timeoutMs: 1200 });
+  const timeoutElapsed = Date.now() - timeoutTestStart;
+
+  assert(timeoutProcRes.status === 'TIMEOUT', `Timed-out sandbox Java execution returns TIMEOUT status (got: ${timeoutProcRes.status})`);
+  assert(timeoutElapsed < 3500, `Watchdog cleanly resolved timeout execution without hanging (${timeoutElapsed}ms)`);
+
+  // Give brief moment (100ms) for SIGKILL reaping in kernel
+  await new Promise((r) => setTimeout(r, 100));
+
+  // Verify no surviving Java process matching the token exists anywhere
+  const survivingTimeoutJava = execSync(`ps aux | grep "${timeoutTargetToken}" | grep -v grep || true`).toString().trim();
+  assert(survivingTimeoutJava === '', `Timed-out sandbox Java process does NOT remain alive after watchdog termination (found: ${survivingTimeoutJava || 'none'})`);
+
+  // Verify no orphan process under PPID 1 was created by this execution
+  const orphanPpid1Check = execSync(`ps -ef | awk '$3 == 1 {print $2, $8}' | grep java || true`).toString().trim();
+  // Filter for our probe token if any general background java was running
+  assert(!orphanPpid1Check.includes(timeoutTargetToken), `No orphan Java process with PPID 1 remains after timeout`);
+
+  // Verify next execution runs normally and succeeds immediately after a timed-out job
+  const nextJobRes = await IsolatedJavaSandbox.execute({
+    jobId: 'sec-after-timeout-normal',
+    submissionId: 'sec-after-timeout-normal',
+    teamId: 'team-sec',
+    challengeId: 'c1',
+    submittedJavaSource: 'public class Main { public static void main(String[] args) { System.out.println("NORMAL_AFTER_TIMEOUT_OK"); } }',
+    submittedAt: new Date().toISOString(),
+  });
+  assert(nextJobRes.status === 'SUCCESS', `Subsequent queued job executes normally after timeout (got: ${nextJobRes.status})`);
+  assert(nextJobRes.stdout.includes('NORMAL_AFTER_TIMEOUT_OK'), 'Subsequent execution stdout contains expected output');
+
   // -------------------------------------------------------------
   // Section 6: Resource Limits Enforcement
   // -------------------------------------------------------------
@@ -358,6 +417,165 @@ public class Main {
   });
   assert(srcRes.status === 'COMPILE_ERROR', `Oversized source triggers COMPILE_ERROR (got: ${srcRes.status})`);
   assert(srcRes.stderr.includes('SOURCE_CODE_TOO_LARGE'), 'Stderr contains SOURCE_CODE_TOO_LARGE error');
+
+  // -------------------------------------------------------------
+  // Section 7: Process Termination, Concurrency & Workspace Cleanup Regressions
+  // -------------------------------------------------------------
+  console.log('\n[Suite 7] Process Cleanup & Concurrency Hardening Regressions');
+
+  // 7.1 CAP_KILL configuration in systemd services
+  const workerServiceContent = fs.readFileSync('production/bugsniper-worker.service', 'utf8');
+  const webServiceContent = fs.readFileSync('production/bugsniper-web.service', 'utf8');
+
+  assert(
+    workerServiceContent.includes('AmbientCapabilities=CAP_SYS_ADMIN CAP_SETUID CAP_SETGID CAP_CHOWN CAP_KILL') &&
+    workerServiceContent.includes('CapabilityBoundingSet=CAP_SYS_ADMIN CAP_SETUID CAP_SETGID CAP_CHOWN CAP_KILL'),
+    'CAP_KILL is granted to worker service in AmbientCapabilities and CapabilityBoundingSet'
+  );
+  assert(
+    workerServiceContent.includes('LimitNOFILE=65536') &&
+    workerServiceContent.includes('TasksMax=') &&
+    workerServiceContent.includes('MemoryMax='),
+    'Worker service enforces host resource limits (TasksMax, MemoryMax, LimitNOFILE)'
+  );
+  assert(
+    !webServiceContent.includes('CAP_KILL') &&
+    webServiceContent.includes('CapabilityBoundingSet=\n') &&
+    webServiceContent.includes('AmbientCapabilities=\n'),
+    'CAP_KILL is strictly NOT granted to public web service'
+  );
+
+  // 7.2 Output-limit termination cleans up process group
+  const floodToken = 'FLOOD_ORPHAN_PROBE_' + Math.random().toString(36).substring(7);
+  const floodCode = `
+public class Main {
+    public static void main(String[] args) throws Exception {
+        System.out.println("${floodToken}_STARTED");
+        while (true) {
+            System.out.println("FLOOD_STREAM_OUTPUT_LINE_DATA_PADDING_BYTES");
+        }
+    }
+}
+`;
+  const floodRes = await IsolatedJavaSandbox.execute({
+    jobId: 'sec-flood-cleanup',
+    submissionId: 'sec-flood-cleanup',
+    teamId: 'team-sec',
+    challengeId: 'c1',
+    submittedJavaSource: floodCode,
+    submittedAt: new Date().toISOString(),
+  });
+  assert(floodRes.status === 'OUTPUT_LIMIT', `Output overflow returns OUTPUT_LIMIT (got: ${floodRes.status})`);
+  await new Promise((r) => setTimeout(r, 100));
+  const survivingFlood = execSync(`ps aux | grep "${floodToken}" | grep -v grep || true`).toString().trim();
+  assert(survivingFlood === '', 'Output-limit termination cleans up and leaves no orphan Java process');
+
+  // 7.3 Workspace cleanup across success, compile failure, runtime failure, timeout, output-limit
+  const sandboxBaseDir = '/tmp/sandboxes';
+  const beforeCount = fs.existsSync(sandboxBaseDir) ? fs.readdirSync(sandboxBaseDir).filter(f => f.startsWith('exec-')).length : 0;
+  
+  // Successful run cleans workspace
+  await IsolatedJavaSandbox.execute({
+    jobId: 'sec-clean-success',
+    submissionId: 'sec-clean-success',
+    teamId: 'team-sec',
+    challengeId: 'c1',
+    submittedJavaSource: 'public class Main { public static void main(String[] args) { System.out.println("CLEAN_OK"); } }',
+    submittedAt: new Date().toISOString(),
+  });
+  const afterSuccessCount = fs.existsSync(sandboxBaseDir) ? fs.readdirSync(sandboxBaseDir).filter(f => f.startsWith('exec-')).length : 0;
+  assert(afterSuccessCount === beforeCount, 'Workspace is cleaned up after successful execution');
+
+  // Compile failure cleans workspace
+  await IsolatedJavaSandbox.execute({
+    jobId: 'sec-clean-compile-err',
+    submissionId: 'sec-clean-compile-err',
+    teamId: 'team-sec',
+    challengeId: 'c1',
+    submittedJavaSource: 'public class Main { syntax error }',
+    submittedAt: new Date().toISOString(),
+  });
+  const afterCompileCount = fs.existsSync(sandboxBaseDir) ? fs.readdirSync(sandboxBaseDir).filter(f => f.startsWith('exec-')).length : 0;
+  assert(afterCompileCount === beforeCount, 'Workspace is cleaned up after compile error');
+
+  // Runtime error cleans workspace
+  await IsolatedJavaSandbox.execute({
+    jobId: 'sec-clean-runtime-err',
+    submissionId: 'sec-clean-runtime-err',
+    teamId: 'team-sec',
+    challengeId: 'c1',
+    submittedJavaSource: 'public class Main { public static void main(String[] args) { throw new RuntimeException("CLEAN_TEST"); } }',
+    submittedAt: new Date().toISOString(),
+  });
+  const afterRuntimeCount = fs.existsSync(sandboxBaseDir) ? fs.readdirSync(sandboxBaseDir).filter(f => f.startsWith('exec-')).length : 0;
+  assert(afterRuntimeCount === beforeCount, 'Workspace is cleaned up after runtime error');
+
+  // Stale workspace cleanup method test
+  const staleDir = '/tmp/sandboxes/exec-00000000-0000-0000-0000-000000000001';
+  fs.mkdirSync(staleDir, { recursive: true });
+  fs.writeFileSync(path.join(staleDir, 'Main.java'), 'class Main {}');
+  // Backdate mtime so it is clearly stale
+  const past = new Date(Date.now() - 5000);
+  fs.utimesSync(staleDir, past, past);
+  // Run cleanup with maxAge 1000ms
+  const cleaned = IsolatedJavaSandbox.cleanupStaleWorkspaces(1000);
+  assert(!fs.existsSync(staleDir), 'IsolatedJavaSandbox.cleanupStaleWorkspaces successfully purges stale workspaces');
+  assert(cleaned >= 1, `Cleaned count recorded: ${cleaned}`);
+
+  // 7.4 Bounded Concurrency & Burst Handling (Queue)
+  process.env.NODE_ENV = 'development';
+  process.env.MAX_CONCURRENT_EXECUTIONS = '2';
+  const boundedQueue = new ExecutionQueueManager();
+  await boundedQueue.initialize();
+
+  let maxObservedActive = 0;
+  let currentlyActive = 0;
+  let totalProcessed = 0;
+
+  boundedQueue.registerWorkerHandler(async () => {
+    currentlyActive++;
+    if (currentlyActive > maxObservedActive) {
+      maxObservedActive = currentlyActive;
+    }
+    // Simulate brief JVM execution window
+    await new Promise((r) => setTimeout(r, 60));
+    currentlyActive--;
+    totalProcessed++;
+    return {
+      jobId: 'mock-burst-job',
+      submissionId: 'mock-burst-sub',
+      status: 'SUCCESS',
+      exitCode: 0,
+      stdout: 'OK',
+      stderr: '',
+      durationMs: 60,
+      workerId: 'burst-worker',
+    };
+  });
+
+  // Submit burst of 8 jobs simultaneously
+  const burstPromises = [];
+  for (let i = 0; i < 8; i++) {
+    burstPromises.push(boundedQueue.enqueue({
+      jobId: `burst-job-${i}`,
+      submissionId: `burst-sub-${i}`,
+      teamId: 'team-burst',
+      challengeId: 'c1',
+      submittedJavaSource: 'public class Main { public static void main(String[] args) {} }',
+      submittedAt: new Date().toISOString(),
+    }));
+  }
+  await Promise.all(burstPromises);
+
+  // Wait for all burst jobs to finish
+  const burstStart = Date.now();
+  while (totalProcessed < 8 && Date.now() - burstStart < 5000) {
+    await new Promise((r) => setTimeout(r, 50));
+  }
+
+  assert(totalProcessed === 8, `Burst submissions completely processed (processed: ${totalProcessed}/8)`);
+  assert(maxObservedActive <= 2, `Burst respects MAX_CONCURRENT_EXECUTIONS ceiling (peak concurrency: ${maxObservedActive}, limit: 2)`);
+  assert(maxObservedActive > 0, `Execution worker successfully executes queued burst jobs`);
 
   console.log('\n================================================================');
   console.log(`SECURITY VERIFICATION COMPLETE: ${testsPassed} passed, ${testsFailed} failed`);

@@ -25,8 +25,8 @@ TimeoutStopSec=30
 # Hardened Linux Sandbox Capabilities:
 # Only the minimal ambient capabilities strictly required for Linux namespace isolation (unshare),
 # privilege dropping to unprivileged sandbox user (setpriv, default UID/GID 2001), and workspace chown
-AmbientCapabilities=CAP_SYS_ADMIN CAP_SETUID CAP_SETGID CAP_CHOWN
-CapabilityBoundingSet=CAP_SYS_ADMIN CAP_SETUID CAP_SETGID CAP_CHOWN
+AmbientCapabilities=CAP_SYS_ADMIN CAP_SETUID CAP_SETGID CAP_CHOWN CAP_KILL
+CapabilityBoundingSet=CAP_SYS_ADMIN CAP_SETUID CAP_SETGID CAP_CHOWN CAP_KILL
 
 # Filesystem protections while preserving access to ephemeral sandboxes
 ProtectSystem=full
@@ -35,9 +35,13 @@ ReadWritePaths=/opt/bugsniper /tmp/sandboxes /var/log/bugsniper
 # PrivateTmp must be false so the unprivileged sandbox user (default UID 2001) can execute inside /tmp/sandboxes
 PrivateTmp=false
 
-# Resource limits
+# Resource limits & host exhaustion protection (4 vCPU / 16 GB RAM VM)
 LimitNOFILE=65536
 LimitNPROC=4096
+TasksMax=1024
+MemoryMax=8G
+MemoryHigh=7G
+CPUQuota=350%
 
 [Install]
 WantedBy=multi-user.target

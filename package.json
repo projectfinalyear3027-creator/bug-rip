@@ -29,6 +29,7 @@
     "test:new-match": "PG_MEM=true SEED_TEST_FIXTURES=true tsx tests/new_match.test.ts",
     "test:java-env": "PG_MEM=true SEED_TEST_FIXTURES=true tsx tests/java_environment.test.ts",
     "test:anti-cheat-solo": "PG_MEM=true tsx tests/anti_cheat_solo.test.ts",
+    "test:anti-cheat-scope": "PG_MEM=true tsx tests/anti_cheat_match_scope.test.ts",
     "test:clean-db": "PG_MEM=true tsx tests/participant_seeds_removal.test.ts",
     "test:no-demo": "PG_MEM=true tsx tests/no_demo_data.test.ts",
     "test:removal": "PG_MEM=true tsx tests/participant_removal.test.ts",

@@ -12,11 +12,27 @@ import { ExecutionJobPayload, ExecutionResult } from './types';
 
 export const EXECUTION_QUEUE_NAME = 'java-execution';
 
+// Safe default concurrency for 4 vCPU / 16 GB RAM production VM
+export const DEFAULT_MAX_CONCURRENT_EXECUTIONS = 2;
+
+export function getMaxConcurrentExecutions(): number {
+  const envVal = process.env.MAX_CONCURRENT_EXECUTIONS;
+  if (envVal) {
+    const parsed = parseInt(envVal, 10);
+    if (!isNaN(parsed) && parsed > 0 && parsed <= 8) {
+      return parsed;
+    }
+  }
+  return DEFAULT_MAX_CONCURRENT_EXECUTIONS;
+}
+
 export class ExecutionQueueManager extends EventEmitter {
   private queue: Queue | null = null;
+  private worker: Worker | null = null;
   private redisConnection: IORedis | null = null;
   private isRedisAvailable: boolean = false;
   private inMemoryQueue: ExecutionJobPayload[] = [];
+  private inMemoryRunningCount: number = 0;
   private jobHandler?: (payload: ExecutionJobPayload) => Promise<ExecutionResult>;
 
   constructor() {
@@ -107,9 +123,13 @@ export class ExecutionQueueManager extends EventEmitter {
    */
   public registerWorkerHandler(handler: (payload: ExecutionJobPayload) => Promise<ExecutionResult>) {
     this.jobHandler = handler;
+    const concurrency = getMaxConcurrentExecutions();
 
     if (this.isRedisAvailable && this.redisConnection) {
-      new Worker(
+      if (this.worker) {
+        this.worker.close().catch(() => {});
+      }
+      this.worker = new Worker(
         EXECUTION_QUEUE_NAME,
         async (job: Job<ExecutionJobPayload>) => {
           return await handler(job.data);
@@ -120,9 +140,32 @@ export class ExecutionQueueManager extends EventEmitter {
             port: this.redisConnection.options.port || 6379,
             maxRetriesPerRequest: null,
           },
-          concurrency: 2,
+          concurrency,
         }
       );
+    }
+  }
+
+  /**
+   * Process pending in-memory jobs with bounded concurrency
+   */
+  private processNextInMemoryJob() {
+    const maxConcurrency = getMaxConcurrentExecutions();
+    while (this.inMemoryRunningCount < maxConcurrency && this.inMemoryQueue.length > 0) {
+      const nextJob = this.inMemoryQueue.shift();
+      if (!nextJob || !this.jobHandler) break;
+
+      this.inMemoryRunningCount++;
+      (async () => {
+        try {
+          await this.jobHandler!(nextJob);
+        } catch (err) {
+          console.error('[InMemoryQueue] Job handler failed:', err);
+        } finally {
+          this.inMemoryRunningCount--;
+          setImmediate(() => this.processNextInMemoryJob());
+        }
+      })();
     }
   }
 
@@ -138,20 +181,12 @@ export class ExecutionQueueManager extends EventEmitter {
       return { jobId };
     }
 
-    // In-memory queue processing
+    // In-memory queue processing with bounded concurrency
     this.inMemoryQueue.push(payload);
     this.emit('job:enqueued', payload);
 
-    // Process asynchronously on next tick so callers receive immediate submission response
-    setImmediate(async () => {
-      const nextJob = this.inMemoryQueue.shift();
-      if (nextJob && this.jobHandler) {
-        try {
-          await this.jobHandler(nextJob);
-        } catch (err) {
-          console.error('[InMemoryQueue] Job handler failed:', err);
-        }
-      }
+    setImmediate(() => {
+      this.processNextInMemoryJob();
     });
 
     return { jobId };

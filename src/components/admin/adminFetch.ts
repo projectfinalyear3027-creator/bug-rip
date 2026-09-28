@@ -76,5 +76,21 @@ export async function adminFetch(
 
   options.headers = headers;
 
-  return fetch(input, options);
+  const isGetOrHead = !options.method || options.method.toUpperCase() === 'GET' || options.method.toUpperCase() === 'HEAD';
+  const maxRetries = isGetOrHead ? 2 : 0;
+  let lastError: any = null;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await fetch(input, options);
+      return response;
+    } catch (err) {
+      lastError = err;
+      if (attempt < maxRetries) {
+        await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
+      }
+    }
+  }
+
+  throw lastError;
 }

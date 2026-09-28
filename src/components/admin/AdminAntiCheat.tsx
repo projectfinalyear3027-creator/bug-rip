@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { adminFetch, getStoredAdminToken } from './adminFetch';
 import {
   ShieldAlert,
@@ -64,6 +64,10 @@ export const AdminAntiCheat: React.FC = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date());
 
+  // Authoritative Match Scoping State
+  const [activeMatchNumber, setActiveMatchNumber] = useState<number | null>(null);
+  const activeMatchNumberRef = useRef<number | null>(null);
+
   // Filters
   const [selectedType, setSelectedType] = useState<string>('ALL');
   const [selectedTeamId, setSelectedTeamId] = useState<string>('ALL');
@@ -76,36 +80,57 @@ export const AdminAntiCheat: React.FC = () => {
   const [submittingReview, setSubmittingReview] = useState<boolean>(false);
   const [reviewFeedback, setReviewFeedback] = useState<string | null>(null);
 
-  const fetchAntiCheatData = useCallback(async () => {
+  const fetchAntiCheatData = useCallback(async (forcedMatchNumber?: number) => {
     try {
       setRefreshing(true);
+      const queryMatch = forcedMatchNumber !== undefined ? forcedMatchNumber : activeMatchNumberRef.current;
+      const isValidMatchNumber = typeof queryMatch === 'number' && !isNaN(queryMatch);
+      const matchQueryParam = isValidMatchNumber ? `&matchNumber=${queryMatch}` : '';
+
       const [eventsRes, summaryRes] = await Promise.all([
         adminFetch(
-          `/api/admin/anti-cheat/events?limit=100${
+          `/api/admin/anti-cheat/events?limit=100${matchQueryParam}${
             selectedType !== 'ALL' ? `&eventType=${selectedType}` : ''
           }${selectedTeamId !== 'ALL' ? `&teamId=${selectedTeamId}` : ''}`
         ),
-        adminFetch('/api/admin/anti-cheat/summary'),
+        adminFetch(`/api/admin/anti-cheat/summary${isValidMatchNumber ? `?matchNumber=${queryMatch}` : ''}`),
       ]);
 
       if (eventsRes.ok) {
         const eventsData = await eventsRes.json();
         if (eventsData.success && eventsData.data) {
-          setEvents(eventsData.data.events || []);
+          const respMatch = eventsData.data.matchNumber;
+          if (typeof respMatch === 'number') {
+            if (activeMatchNumberRef.current !== null && activeMatchNumberRef.current !== respMatch) {
+              // Match transition detected: Clear old match incidents immediately!
+              setEvents([]);
+              setSummary(null);
+              setOffendingTeams([]);
+            }
+            activeMatchNumberRef.current = respMatch;
+            setActiveMatchNumber(respMatch);
+          }
+          // Only populate if this response matches the current authoritative match
+          if (typeof respMatch !== 'number' || activeMatchNumberRef.current === null || respMatch === activeMatchNumberRef.current) {
+            setEvents(eventsData.data.events || []);
+          }
         }
       }
 
       if (summaryRes.ok) {
         const sumData = await summaryRes.json();
         if (sumData.success && sumData.data) {
-          setSummary(sumData.data.stats || null);
-          setOffendingTeams(sumData.data.teams || []);
+          const respMatch = sumData.data.matchNumber;
+          if (typeof respMatch !== 'number' || activeMatchNumberRef.current === null || respMatch === activeMatchNumberRef.current) {
+            setSummary(sumData.data.stats || null);
+            setOffendingTeams(sumData.data.teams || []);
+          }
         }
       }
 
       setLastRefreshed(new Date());
-    } catch (err) {
-      console.error('Failed to load anti-cheat data:', err);
+    } catch (err: any) {
+      console.warn('Unable to load anti-cheat data:', err?.message || err);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -114,19 +139,71 @@ export const AdminAntiCheat: React.FC = () => {
 
   useEffect(() => {
     fetchAntiCheatData();
-    const interval = setInterval(fetchAntiCheatData, 5000);
+    const interval = setInterval(() => {
+      fetchAntiCheatData();
+    }, 5000);
 
     let eventSource: EventSource | null = null;
     try {
       const token = getStoredAdminToken();
       const sseUrl = token ? `/api/admin/events?token=${encodeURIComponent(token)}` : '/api/admin/events';
       eventSource = new EventSource(sseUrl, { withCredentials: true });
-      eventSource.addEventListener('admin.anticheat.event', () => {
+
+      const handleMatchTransition = (dataStr?: string) => {
+        try {
+          let payload: any = {};
+          if (dataStr) {
+            payload = JSON.parse(dataStr);
+          }
+          const newMatchNumber = payload?.matchNumber;
+          if (typeof newMatchNumber === 'number' && newMatchNumber !== activeMatchNumberRef.current) {
+            // MATCH B IS ESTABLISHED:
+            // Immediately reset/clear the Admin incidents panel
+            setEvents([]);
+            setSummary(null);
+            setOffendingTeams([]);
+            activeMatchNumberRef.current = newMatchNumber;
+            setActiveMatchNumber(newMatchNumber);
+            fetchAntiCheatData(newMatchNumber);
+          } else {
+            fetchAntiCheatData();
+          }
+        } catch {
+          fetchAntiCheatData();
+        }
+      };
+
+      eventSource.addEventListener('admin.anticheat.event', (e: MessageEvent) => {
+        try {
+          const payload = JSON.parse(e.data);
+          const incoming = payload?.event;
+          // Check if event belongs to current match! Discard late events from previous match.
+          if (incoming?.matchNumber && activeMatchNumberRef.current !== null) {
+            if (incoming.matchNumber !== activeMatchNumberRef.current) {
+              // LATE EVENT FROM ANOTHER MATCH - DISCARD TO PREVENT CONTAMINATION!
+              return;
+            }
+          }
+        } catch {}
         fetchAntiCheatData();
       });
+
+      eventSource.addEventListener('match.reset', (e: MessageEvent) => {
+        handleMatchTransition(e.data);
+      });
+
+      eventSource.addEventListener('admin.match.reset', (e: MessageEvent) => {
+        handleMatchTransition(e.data);
+      });
+
+      eventSource.addEventListener('event.status.changed', (e: MessageEvent) => {
+        handleMatchTransition(e.data);
+      });
+
       eventSource.addEventListener('admin.connection.changed', () => {
         fetchAntiCheatData();
       });
+
       eventSource.addEventListener('admin.metrics.updated', () => {
         fetchAntiCheatData();
       });
@@ -291,6 +368,9 @@ export const AdminAntiCheat: React.FC = () => {
             <h3 className="text-sm font-bold text-zinc-100 uppercase tracking-wide">
               Anti-Cheat & Competition Integrity Monitor
             </h3>
+            <span className="text-[10px] px-2 py-0.5 rounded bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 font-bold">
+              MATCH #{activeMatchNumber ?? 1}
+            </span>
             <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/30 text-amber-300 font-bold">
               FRAGMENT 12
             </span>
@@ -523,7 +603,7 @@ export const AdminAntiCheat: React.FC = () => {
               ) : filteredEvents.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="text-center py-8 text-zinc-500 italic">
-                    No anti-cheat incidents matching the current filter criteria.
+                    {`No anti-cheat incidents recorded for Match #${activeMatchNumber ?? 1} matching the current filter criteria.`}
                   </td>
                 </tr>
               ) : (

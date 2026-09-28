@@ -66,8 +66,8 @@ export const AdminTeams: React.FC = () => {
         setTeams(data.teams || []);
         setLastRefreshed(new Date());
       }
-    } catch (err) {
-      console.error('Failed to load teams overview:', err);
+    } catch (err: any) {
+      console.warn('Unable to load teams overview (server may be booting):', err?.message || err);
     } finally {
       setLoading(false);
     }
