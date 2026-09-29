@@ -33,6 +33,7 @@ import {
 } from '../../src/db/schema.ts';
 import { eventService } from './eventService.ts';
 import { progressionService } from './progressionService.ts';
+import { antiCheatService } from './antiCheatService.ts';
 import { challengeRepository } from '../repositories/challengeRepository.ts';
 import { teamChallengeRepository } from '../repositories/teamChallengeRepository.ts';
 import { teamRealtimeService } from './teamRealtimeService.ts';
@@ -99,6 +100,7 @@ export interface SubmitFlagParams {
   submittedFlag: string;
   sessionId?: string;
   executionId?: string;
+  requireFullscreen?: boolean;
 }
 
 export interface CompletionResult {
@@ -151,6 +153,23 @@ export class CompletionService {
             : 'ACTION_DISALLOWED',
         message: gatekeeper.reason || 'Competition action not allowed in current state.',
       };
+    }
+
+    // 1b. Fullscreen Solving Gatekeeper (Active Arena Fullscreen Required)
+    if (gatekeeper.status === 'RUNNING' && params.requireFullscreen) {
+      const isFullscreen = antiCheatService.isParticipantInFullscreen(
+        effectiveLookupId,
+        params.teamId,
+        sessionId
+      );
+      if (!isFullscreen) {
+        return {
+          success: false,
+          accepted: false,
+          code: 'FULLSCREEN_REQUIRED',
+          message: 'Active arena fullscreen is required to submit flags.',
+        };
+      }
     }
 
     // 2. Challenge Existence and Active Status Check

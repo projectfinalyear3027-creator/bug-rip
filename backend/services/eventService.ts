@@ -9,6 +9,7 @@ import { teamChallengeRepository } from '../repositories/teamChallengeRepository
 import { teamRepository } from '../repositories/teamRepository.ts';
 import { progressionService } from './progressionService.ts';
 import { leaderboardRealtimeService } from './leaderboardRealtimeService.ts';
+import { antiCheatService } from './antiCheatService.ts';
 import { AppError } from '../middleware/errorHandler.ts';
 
 export interface AuthoritativeEventStatus {
@@ -152,11 +153,19 @@ export class EventService {
    * Universal check for challenge actions, Java execution, flag submissions, and scoring.
    * Centralizes all competition state boundary checks.
    */
-  async isCompetitionActionAllowed(teamId?: string): Promise<{
+  async isCompetitionActionAllowed(
+    teamId?: string,
+    options?: {
+      requireFullscreen?: boolean;
+      participantId?: string;
+      sessionId?: string;
+    }
+  ): Promise<{
     allowed: boolean;
     status: 'NOT_STARTED' | 'RUNNING' | 'PAUSED' | 'ENDED';
     reason?: string;
     remainingSeconds: number;
+    code?: string;
   }> {
     const eventState = await this.getEventStatus();
 
@@ -165,6 +174,7 @@ export class EventService {
         allowed: false,
         status: 'NOT_STARTED',
         remainingSeconds: eventState.remainingSeconds,
+        code: 'EVENT_NOT_STARTED',
         reason: 'Competition has not started yet. Participants must wait in the waiting room.',
       };
     }
@@ -174,6 +184,7 @@ export class EventService {
         allowed: false,
         status: 'PAUSED',
         remainingSeconds: eventState.remainingSeconds,
+        code: 'EVENT_PAUSED',
         reason: 'Competition is currently paused by the organizer. Submissions are temporarily suspended.',
       };
     }
@@ -183,6 +194,7 @@ export class EventService {
         allowed: false,
         status: 'ENDED',
         remainingSeconds: 0,
+        code: 'EVENT_ENDED',
         reason: 'Competition has ended. No further submissions or progress are accepted.',
       };
     }
@@ -194,6 +206,7 @@ export class EventService {
           allowed: false,
           status: 'RUNNING',
           remainingSeconds: eventState.remainingSeconds,
+          code: 'TEAM_NOT_FOUND',
           reason: 'Team not found in registry.',
         };
       }
@@ -202,7 +215,26 @@ export class EventService {
           allowed: false,
           status: 'RUNNING',
           remainingSeconds: eventState.remainingSeconds,
+          code: 'TEAM_INACTIVE',
           reason: `Team is currently ${team.status}. Access denied.`,
+        };
+      }
+    }
+
+    // Fullscreen Gatekeeper check when required
+    if (options?.requireFullscreen && eventState.status === 'RUNNING') {
+      const isFs = antiCheatService.isParticipantInFullscreen(
+        options.participantId || teamId,
+        teamId,
+        options.sessionId
+      );
+      if (!isFs) {
+        return {
+          allowed: false,
+          status: 'RUNNING',
+          remainingSeconds: eventState.remainingSeconds,
+          code: 'FULLSCREEN_REQUIRED',
+          reason: 'Active arena fullscreen is required to execute code and submit flags.',
         };
       }
     }

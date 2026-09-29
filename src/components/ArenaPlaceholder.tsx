@@ -153,7 +153,17 @@ export const ArenaPlaceholder: React.FC<ArenaPlaceholderProps> = ({
   // Fetch team progression & challenges
   const fetchProgression = async () => {
     try {
-      const res = await fetch('/api/challenges');
+      const token = typeof localStorage !== 'undefined' ? localStorage.getItem('bugrip_participant_token') : null;
+      const headers: Record<string, string> = { Accept: 'application/json' };
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+        headers['X-Session-Token'] = token;
+      }
+      const res = await fetch('/api/challenges', { headers, credentials: 'include' });
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        return;
+      }
       if (res.ok) {
         const data = await res.json();
         if (data.success && data.data) {
@@ -161,7 +171,7 @@ export const ArenaPlaceholder: React.FC<ArenaPlaceholderProps> = ({
         }
       }
     } catch (err) {
-      console.error('Failed to load progression:', err);
+      console.warn('Failed to load progression:', err);
     }
   };
 

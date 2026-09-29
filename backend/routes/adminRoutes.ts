@@ -877,6 +877,37 @@ adminRouter.get('/matches', requireAdmin, async (_req: Request, res: Response) =
 });
 
 /**
+ * GET /api/admin/matches/:matchNumber
+ * Returns full historical or live details, stats, and completed challenges for a specific match.
+ */
+adminRouter.get('/matches/:matchNumber', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const param = req.params.matchNumber;
+    const matchNumber = parseInt(param, 10);
+    const identifier = isNaN(matchNumber) ? param : matchNumber;
+
+    const data = await adminRepository.getMatchDetails(identifier);
+    if (!data) {
+      return res.status(404).json({
+        success: false,
+        error: `Match ${param} not found.`,
+      });
+    }
+
+    return res.json({
+      success: true,
+      ...data,
+    });
+  } catch (err: any) {
+    console.error('Fetch match details error:', err);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to retrieve match details.',
+    });
+  }
+});
+
+/**
  * GET /api/admin/matches/:matchNumber/leaderboard
  * Returns the final or live leaderboard for a specific match.
  */
@@ -890,7 +921,7 @@ adminRouter.get('/matches/:matchNumber/leaderboard', requireAdmin, async (req: R
       });
     }
 
-    const data = await adminRepository.getMatchLeaderboard(matchNumber);
+    const data = await adminRepository.getMatchDetails(matchNumber);
     if (!data) {
       return res.status(404).json({
         success: false,
@@ -901,12 +932,77 @@ adminRouter.get('/matches/:matchNumber/leaderboard', requireAdmin, async (req: R
     return res.json({
       success: true,
       ...data,
+      leaderboard: data.finalLeaderboard,
     });
   } catch (err: any) {
     console.error('Fetch match leaderboard error:', err);
     return res.status(500).json({
       success: false,
       error: 'Failed to retrieve match leaderboard.',
+    });
+  }
+});
+
+/**
+ * DELETE /api/admin/matches/:matchNumber
+ * Deletes a single completed/archived historical match.
+ * Fails if match is the active match or currently in progress.
+ */
+adminRouter.delete('/matches/:matchNumber', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const param = req.params.matchNumber;
+    const matchNumber = parseInt(param, 10);
+    const identifier = isNaN(matchNumber) ? param : matchNumber;
+    const adminUserId = req.adminUser!.id;
+
+    const result = await adminRepository.deleteMatch(identifier, adminUserId);
+    if (!result.success) {
+      return res.status(result.statusCode || 400).json({
+        success: false,
+        error: result.error,
+        code: result.code,
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: `Match #${result.match?.matchNumber ?? param} successfully deleted from history.`,
+      match: result.match,
+    });
+  } catch (err: any) {
+    console.error('Delete match error:', err);
+    return res.status(500).json({
+      success: false,
+      error: 'Internal server error while deleting match.',
+    });
+  }
+});
+
+/**
+ * DELETE /api/admin/matches
+ * Clears all completed/archived historical matches, preserving active match.
+ */
+adminRouter.delete('/matches', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const adminUserId = req.adminUser!.id;
+    const result = await adminRepository.clearArchivedMatches(adminUserId);
+    if (!result.success) {
+      return res.status(400).json({
+        success: false,
+        error: result.error || 'Failed to clear match history.',
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: `Successfully cleared ${result.deletedCount} archived match(es) from history. Active match preserved.`,
+      deletedCount: result.deletedCount,
+    });
+  } catch (err: any) {
+    console.error('Clear matches error:', err);
+    return res.status(500).json({
+      success: false,
+      error: 'Internal server error while clearing match history.',
     });
   }
 });

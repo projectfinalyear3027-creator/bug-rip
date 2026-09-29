@@ -6,7 +6,7 @@
 
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
-import { eq, and, gt, desc, sql, count, inArray, or } from 'drizzle-orm';
+import { eq, ne, and, gt, desc, sql, count, inArray, or } from 'drizzle-orm';
 import { db } from '../../src/db/index.ts';
 import {
   adminUsers,
@@ -26,6 +26,8 @@ import {
   teamUnlockedRounds,
   progressionOverrides,
   antiCheatEvents,
+  submissions,
+  flagSubmissions,
 } from '../../src/db/schema.ts';
 import { teamRealtimeService } from '../services/teamRealtimeService.ts';
 import { leaderboardRealtimeService } from '../services/leaderboardRealtimeService.ts';
@@ -1421,10 +1423,27 @@ export class AdminRepository {
             matchId: newMatch.id,
             timestamp: now.toISOString(),
           });
+          teamRealtimeService.broadcastGlobal('match.reset', {
+            matchNumber: nextMatchNumber,
+            matchName,
+            matchId: newMatch.id,
+            durationMinutes,
+            timestamp: now.toISOString(),
+          });
           teamRealtimeService.broadcastToAdmin('event.status.changed', {
             status: 'NOT_STARTED',
             matchNumber: nextMatchNumber,
             matchName,
+            timestamp: now.toISOString(),
+          });
+          teamRealtimeService.broadcastGlobal('event.status.changed', {
+            status: 'NOT_STARTED',
+            matchNumber: nextMatchNumber,
+            matchName,
+            matchId: newMatch.id,
+            durationMinutes,
+            remainingSeconds: durationMinutes * 60,
+            totalSeconds: durationMinutes * 60,
             timestamp: now.toISOString(),
           });
           teamRealtimeService.broadcastToAdmin('admin.metrics.updated', {
@@ -1483,24 +1502,46 @@ export class AdminRepository {
   }
 
   /**
-   * Retrieves leaderboard for a specific match (either active live or archived).
+   * Retrieves detailed results and metadata for a specific match (active live or archived).
+   * Never falls back to active match state when querying historical matches.
    */
-  async getMatchLeaderboard(matchNumber: number): Promise<{
+  async getMatchDetails(matchNumberOrId: number | string): Promise<{
     matchNumber: number;
+    id: string;
     name: string;
     status: string;
+    durationMinutes: number;
+    startedAt: string | null;
+    endedAt: string | null;
+    durationSeconds: number;
+    participantCount: number;
+    totalSolves: number;
     isArchived: boolean;
-    leaderboard: any[];
+    hasHistoricalData: boolean;
+    finalLeaderboard: any[];
+    completedChallenges: any[];
   } | null> {
-    const [match] = await db
-      .select()
-      .from(competitionMatches)
-      .where(eq(competitionMatches.matchNumber, matchNumber))
-      .limit(1);
-
-    if (!match) {
-      return null;
+    let matchRows;
+    if (
+      typeof matchNumberOrId === 'number' ||
+      (!isNaN(Number(matchNumberOrId)) && !String(matchNumberOrId).includes('-'))
+    ) {
+      const num = Number(matchNumberOrId);
+      matchRows = await db
+        .select()
+        .from(competitionMatches)
+        .where(eq(competitionMatches.matchNumber, num))
+        .limit(1);
+    } else {
+      matchRows = await db
+        .select()
+        .from(competitionMatches)
+        .where(eq(competitionMatches.id, String(matchNumberOrId)))
+        .limit(1);
     }
+
+    const match = matchRows[0];
+    if (!match) return null;
 
     const currentEvent = await db
       .select()
@@ -1508,39 +1549,440 @@ export class AdminRepository {
       .where(eq(eventSettings.id, 1))
       .limit(1);
 
-    const isCurrent = currentEvent[0]?.currentMatchNumber === matchNumber;
+    const isCurrent = currentEvent[0]?.currentMatchNumber === match.matchNumber;
 
+    // Fetch completed challenges archived for this match
+    const histCompletions = await db
+      .select({
+        teamId: matchHistoricalChallenges.teamId,
+        challengeId: matchHistoricalChallenges.challengeId,
+        status: matchHistoricalChallenges.status,
+        attemptCount: matchHistoricalChallenges.attemptCount,
+        completedAt: matchHistoricalChallenges.completedAt,
+        completionTimestamp: matchHistoricalChallenges.completionTimestamp,
+      })
+      .from(matchHistoricalChallenges)
+      .where(eq(matchHistoricalChallenges.matchNumber, match.matchNumber));
+
+    // Calculate duration in seconds
+    let durationSec = match.durationMinutes * 60;
+    if (match.startedAt && match.endedAt) {
+      durationSec = Math.max(
+        0,
+        Math.floor(
+          (new Date(match.endedAt).getTime() - new Date(match.startedAt).getTime()) / 1000
+        ) - (match.totalPausedDurationSeconds || 0)
+      );
+    }
+
+    // Active in-progress match returns current live board
     if (isCurrent && match.status !== 'ENDED') {
       const liveLeaderboard = await eventRepository.getLeaderboard();
+      const solves = liveLeaderboard.reduce(
+        (acc: number, cur: any) => acc + (cur.problemsSolved || 0),
+        0
+      );
       return {
         matchNumber: match.matchNumber,
+        id: match.id,
         name: match.name,
         status: match.status,
+        durationMinutes: match.durationMinutes,
+        startedAt: match.startedAt ? new Date(match.startedAt).toISOString() : null,
+        endedAt: match.endedAt ? new Date(match.endedAt).toISOString() : null,
+        durationSeconds: durationSec,
+        participantCount: liveLeaderboard.length,
+        totalSolves: solves,
         isArchived: false,
-        leaderboard: liveLeaderboard,
+        hasHistoricalData: true,
+        finalLeaderboard: liveLeaderboard,
+        completedChallenges: histCompletions,
       };
     }
 
-    // Return archived final leaderboard if available
-    if (match.finalLeaderboard && Array.isArray(match.finalLeaderboard)) {
-      return {
-        matchNumber: match.matchNumber,
-        name: match.name,
-        status: match.status,
-        isArchived: true,
-        leaderboard: match.finalLeaderboard,
-      };
+    // Historical ended/archived match: strictly use persisted snapshot or historical completions
+    let leaderboard: any[] = [];
+    let hasData = false;
+
+    if (match.finalLeaderboard && Array.isArray(match.finalLeaderboard) && match.finalLeaderboard.length > 0) {
+      leaderboard = match.finalLeaderboard.map((item: any, idx: number) => ({
+        rank: item.rank || idx + 1,
+        participantId: item.participantId || item.unitId || item.teamId,
+        participantName: item.participantName || item.teamName || item.name || 'Unknown Competitor',
+        teamName: item.teamName || item.participantName || item.name || 'Unknown Competitor',
+        college: item.college || null,
+        problemsSolved: Number(item.problemsSolved ?? item.challengesSolved ?? item.solvedCount ?? 0),
+        score: Number(item.score ?? item.totalScore ?? 0),
+        totalScore: Number(item.score ?? item.totalScore ?? 0),
+        lastSolveTimestamp: item.lastSolveTimestamp || null,
+      }));
+      hasData = true;
+    } else if (histCompletions.length > 0) {
+      // Reconstruct from historical completions
+      const allChallengesList = await db.select().from(challenges);
+      const chalMap = new Map(allChallengesList.map((c) => [c.id, c]));
+      const allTeamsList = await db.select().from(teams);
+      const teamMap = new Map(allTeamsList.map((t) => [t.id, t]));
+
+      const teamSolves = new Map<
+        string,
+        { solves: number; score: number; lastSolve: Date | null }
+      >();
+      for (const hc of histCompletions) {
+        if (hc.status === 'COMPLETED') {
+          const prev = teamSolves.get(hc.teamId) || { solves: 0, score: 0, lastSolve: null };
+          const c = chalMap.get(hc.challengeId) as any;
+          prev.solves += 1;
+          prev.score += c?.score || 10;
+          const ts = hc.completionTimestamp || hc.completedAt;
+          if (ts && (!prev.lastSolve || new Date(ts) > prev.lastSolve)) {
+            prev.lastSolve = new Date(ts);
+          }
+          teamSolves.set(hc.teamId, prev);
+        }
+      }
+
+      const entries = Array.from(teamSolves.entries()).map(([tId, stat]) => {
+        const teamObj = teamMap.get(tId) as any;
+        return {
+          participantId: tId,
+          participantName: teamObj?.teamName || 'Unknown Competitor',
+          teamName: teamObj?.teamName || 'Unknown Competitor',
+          problemsSolved: stat.solves,
+          score: stat.score,
+          totalScore: stat.score,
+          lastSolveTimestamp: stat.lastSolve?.toISOString() || null,
+        };
+      });
+
+      entries.sort((a, b) => {
+        if (b.problemsSolved !== a.problemsSolved) return b.problemsSolved - a.problemsSolved;
+        if (b.score !== a.score) return b.score - a.score;
+        return 0;
+      });
+
+      leaderboard = entries.map((e, idx) => ({ ...e, rank: idx + 1 }));
+      hasData = leaderboard.length > 0;
     }
 
-    // Fallback if not snapshotted yet
-    const lb = await eventRepository.getLeaderboard();
+    const totalSolves = leaderboard.reduce(
+      (acc: number, cur: any) => acc + (cur.problemsSolved || 0),
+      0
+    );
+
     return {
       matchNumber: match.matchNumber,
+      id: match.id,
       name: match.name,
       status: match.status,
-      isArchived: match.status === 'ENDED',
-      leaderboard: lb,
+      durationMinutes: match.durationMinutes,
+      startedAt: match.startedAt ? new Date(match.startedAt).toISOString() : null,
+      endedAt: match.endedAt ? new Date(match.endedAt).toISOString() : null,
+      durationSeconds: durationSec,
+      participantCount: leaderboard.length,
+      totalSolves,
+      isArchived: true,
+      hasHistoricalData: hasData,
+      finalLeaderboard: leaderboard,
+      completedChallenges: histCompletions,
     };
+  }
+
+  /**
+   * Retrieves leaderboard for a specific match (either active live or archived).
+   * For historical matches, never returns current active match state.
+   */
+  async getMatchLeaderboard(matchNumber: number): Promise<{
+    matchNumber: number;
+    id?: string;
+    name: string;
+    status: string;
+    isArchived: boolean;
+    hasHistoricalData: boolean;
+    leaderboard: any[];
+  } | null> {
+    const details = await this.getMatchDetails(matchNumber);
+    if (!details) return null;
+
+    return {
+      matchNumber: details.matchNumber,
+      id: details.id,
+      name: details.name,
+      status: details.status,
+      isArchived: details.isArchived,
+      hasHistoricalData: details.hasHistoricalData,
+      leaderboard: details.finalLeaderboard,
+    };
+  }
+
+  /**
+   * Deletes a single completed/archived historical match.
+   * Rules:
+   * - Never delete the currently active match.
+   * - Never delete a RUNNING/PAUSED/NOT_STARTED active match.
+   * - Preserve participant registrations and challenges.
+   * - Delete only match-scoped historical records.
+   * - Use transaction.
+   * - Record audit log.
+   */
+  async deleteMatch(
+    matchNumberOrId: number | string,
+    adminUserId: string
+  ): Promise<{
+    success: boolean;
+    error?: string;
+    code?: string;
+    statusCode?: number;
+    match?: any;
+  }> {
+    const resolvedAdminId = await this.resolveAdminUserId(adminUserId);
+
+    return await db.transaction(async (tx) => {
+      let matchQuery;
+      if (
+        typeof matchNumberOrId === 'number' ||
+        (!isNaN(Number(matchNumberOrId)) && !String(matchNumberOrId).includes('-'))
+      ) {
+        const num = Number(matchNumberOrId);
+        matchQuery = tx
+          .select()
+          .from(competitionMatches)
+          .where(eq(competitionMatches.matchNumber, num))
+          .limit(1);
+      } else {
+        matchQuery = tx
+          .select()
+          .from(competitionMatches)
+          .where(eq(competitionMatches.id, String(matchNumberOrId)))
+          .limit(1);
+      }
+
+      const matchRows = await matchQuery;
+      const targetMatch = matchRows[0];
+      if (!targetMatch) {
+        return {
+          success: false,
+          error: `Match ${matchNumberOrId} not found.`,
+          code: 'MATCH_NOT_FOUND',
+          statusCode: 404,
+        };
+      }
+
+      // Check if active match
+      const [currentEvent] = await tx
+        .select()
+        .from(eventSettings)
+        .where(eq(eventSettings.id, 1))
+        .limit(1);
+
+      if (currentEvent && currentEvent.currentMatchNumber === targetMatch.matchNumber) {
+        return {
+          success: false,
+          error: `Cannot delete active competition Match #${targetMatch.matchNumber}. Only archived or past matches can be deleted from history.`,
+          code: 'CANNOT_DELETE_ACTIVE_MATCH',
+          statusCode: 400,
+        };
+      }
+
+      if (targetMatch.status === 'RUNNING' || targetMatch.status === 'PAUSED') {
+        return {
+          success: false,
+          error: `Cannot delete Match #${targetMatch.matchNumber} because its status is "${targetMatch.status}". Only ended/archived matches can be removed.`,
+          code: 'CANNOT_DELETE_IN_PROGRESS_MATCH',
+          statusCode: 400,
+        };
+      }
+
+      // Delete match-scoped historical records inside transaction
+      await tx
+        .delete(matchHistoricalChallenges)
+        .where(
+          or(
+            eq(matchHistoricalChallenges.matchId, targetMatch.id),
+            eq(matchHistoricalChallenges.matchNumber, targetMatch.matchNumber)
+          )
+        );
+
+      await tx
+        .delete(submissions)
+        .where(
+          or(
+            eq(submissions.matchId, targetMatch.id),
+            eq(submissions.matchNumber, targetMatch.matchNumber)
+          )
+        );
+
+      await tx
+        .delete(flagSubmissions)
+        .where(
+          or(
+            eq(flagSubmissions.matchId, targetMatch.id),
+            eq(flagSubmissions.matchNumber, targetMatch.matchNumber)
+          )
+        );
+
+      await tx
+        .delete(antiCheatEvents)
+        .where(
+          or(
+            eq(antiCheatEvents.matchId, targetMatch.id),
+            eq(antiCheatEvents.matchNumber, targetMatch.matchNumber)
+          )
+        );
+
+      await tx
+        .delete(competitionMatches)
+        .where(eq(competitionMatches.id, targetMatch.id));
+
+      // Record audit log
+      await this.recordAuditLog(
+        {
+          action: 'MATCH_DELETED',
+          targetType: 'MATCH',
+          targetId: String(targetMatch.matchNumber),
+          adminUserId: resolvedAdminId,
+          reason: `Archived match #${targetMatch.matchNumber} ("${targetMatch.name}") deleted from match history.`,
+          metadata: {
+            matchNumber: targetMatch.matchNumber,
+            matchId: targetMatch.id,
+            matchName: targetMatch.name,
+            status: targetMatch.status,
+            deletedAt: new Date().toISOString(),
+          },
+        },
+        tx
+      );
+
+      // Real-time broadcast
+      try {
+        teamRealtimeService.broadcastToAdmin('admin.match.deleted', {
+          matchNumber: targetMatch.matchNumber,
+          matchId: targetMatch.id,
+        });
+        teamRealtimeService.broadcastGlobal('match.deleted', {
+          matchNumber: targetMatch.matchNumber,
+        });
+        teamRealtimeService.broadcastToAdmin('admin.metrics.updated', {
+          timestamp: new Date().toISOString(),
+        });
+      } catch (bcErr) {
+        console.warn('Broadcast error after match deletion:', bcErr);
+      }
+
+      return {
+        success: true,
+        match: targetMatch,
+      };
+    });
+  }
+
+  /**
+   * Clears all completed/archived historical matches while strictly preserving the active match.
+   */
+  async clearArchivedMatches(adminUserId: string): Promise<{
+    success: boolean;
+    deletedCount: number;
+    error?: string;
+  }> {
+    const resolvedAdminId = await this.resolveAdminUserId(adminUserId);
+
+    return await db.transaction(async (tx) => {
+      const [currentEvent] = await tx
+        .select()
+        .from(eventSettings)
+        .where(eq(eventSettings.id, 1))
+        .limit(1);
+
+      const activeMatchNum = currentEvent?.currentMatchNumber || 1;
+
+      // Find all matches that are NOT the active match
+      const archivedMatches = await tx
+        .select()
+        .from(competitionMatches)
+        .where(ne(competitionMatches.matchNumber, activeMatchNum));
+
+      if (archivedMatches.length === 0) {
+        return { success: true, deletedCount: 0 };
+      }
+
+      const matchNumbers = archivedMatches.map((m) => m.matchNumber);
+      const matchIds = archivedMatches.map((m) => m.id);
+
+      // Clean up scoped records
+      await tx
+        .delete(matchHistoricalChallenges)
+        .where(
+          or(
+            inArray(matchHistoricalChallenges.matchNumber, matchNumbers),
+            inArray(matchHistoricalChallenges.matchId, matchIds)
+          )
+        );
+
+      await tx
+        .delete(submissions)
+        .where(
+          or(
+            inArray(submissions.matchNumber, matchNumbers),
+            inArray(submissions.matchId, matchIds)
+          )
+        );
+
+      await tx
+        .delete(flagSubmissions)
+        .where(
+          or(
+            inArray(flagSubmissions.matchNumber, matchNumbers),
+            inArray(flagSubmissions.matchId, matchIds)
+          )
+        );
+
+      await tx
+        .delete(antiCheatEvents)
+        .where(
+          or(
+            inArray(antiCheatEvents.matchNumber, matchNumbers),
+            inArray(antiCheatEvents.matchId, matchIds)
+          )
+        );
+
+      await tx
+        .delete(competitionMatches)
+        .where(inArray(competitionMatches.id, matchIds));
+
+      await this.recordAuditLog(
+        {
+          action: 'MATCH_HISTORY_CLEARED',
+          targetType: 'MATCH',
+          targetId: 'ALL_ARCHIVED',
+          adminUserId: resolvedAdminId,
+          reason: `Cleared all ${archivedMatches.length} archived historical matches from history. Active Match #${activeMatchNum} preserved.`,
+          metadata: {
+            clearedMatchNumbers: matchNumbers,
+            count: archivedMatches.length,
+            clearedAt: new Date().toISOString(),
+          },
+        },
+        tx
+      );
+
+      try {
+        teamRealtimeService.broadcastToAdmin('admin.match.deleted', {
+          allArchived: true,
+          clearedMatchNumbers: matchNumbers,
+        });
+        teamRealtimeService.broadcastGlobal('match.deleted', {
+          allArchived: true,
+        });
+        teamRealtimeService.broadcastToAdmin('admin.metrics.updated', {
+          timestamp: new Date().toISOString(),
+        });
+      } catch {}
+
+      return {
+        success: true,
+        deletedCount: archivedMatches.length,
+      };
+    });
   }
 }
 

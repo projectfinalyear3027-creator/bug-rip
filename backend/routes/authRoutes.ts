@@ -14,9 +14,13 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { teamRepository } from '../repositories/teamRepository.ts';
 import { eventRepository } from '../repositories/eventRepository.ts';
 import { antiCheatRepository } from '../repositories/antiCheatRepository.ts';
+import { eventService } from '../services/eventService.ts';
 import { teamRealtimeService } from '../services/teamRealtimeService.ts';
 import { loginRateLimiter } from '../middleware/rateLimiter.ts';
 import { requireParticipantAuth, extractToken } from '../middleware/authMiddleware.ts';
+import { db } from '../../src/db/index.ts';
+import { competitionMatches } from '../../src/db/schema.ts';
+import { eq } from 'drizzle-orm';
 
 export const authRouter = Router();
 
@@ -156,14 +160,27 @@ async function handleParticipantLogin(req: Request, res: Response, next: NextFun
       path: '/',
     });
 
-    // 6. Get authoritative event status
-    const settings = await eventRepository.getEventSettings();
-    const eventStatus = settings?.status || 'NOT_STARTED';
+    // 6. Get authoritative event status and timer
+    const eventStatus = await eventService.getEventStatus();
+    const currentMatchNumber = eventStatus.currentMatchNumber;
+    let currentMatchId = eventStatus.currentMatchId;
+    if (!currentMatchId) {
+      try {
+        const [mRow] = await db
+          .select({ id: competitionMatches.id })
+          .from(competitionMatches)
+          .where(eq(competitionMatches.matchNumber, currentMatchNumber))
+          .limit(1);
+        currentMatchId = mRow?.id || null;
+      } catch {}
+    }
 
     return res.json({
       success: true,
       message: 'Participant authenticated successfully',
       isSolo: true,
+      currentMatchNumber,
+      currentMatchId,
       participant: {
         id: participant.id,
         name: participant.name,
@@ -182,7 +199,22 @@ async function handleParticipantLogin(req: Request, res: Response, next: NextFun
         id: session.id,
         connectedAt: session.connectedAt,
       },
-      eventStatus,
+      eventStatus: eventStatus.status,
+      durationMinutes: eventStatus.durationMinutes,
+      authoritativeTimer: {
+        currentMatchId,
+        currentMatchNumber,
+        status: eventStatus.status,
+        durationMinutes: eventStatus.durationMinutes,
+        totalSeconds: eventStatus.totalSeconds,
+        remainingSeconds: eventStatus.remainingSeconds,
+        elapsedSeconds: eventStatus.elapsedSeconds,
+        startedAt: eventStatus.startedAt,
+        endedAt: eventStatus.endedAt,
+        pausedAt: eventStatus.pausedAt,
+        scheduledEndTime: eventStatus.scheduledEndTime,
+        serverTime: eventStatus.serverTime,
+      },
       sessionToken: rawToken,
     });
   } catch (err) {
@@ -255,12 +287,25 @@ authRouter.get('/session', async (req: Request, res: Response) => {
     // Refresh heartbeat
     await teamRepository.updateSessionHeartbeat(session.id);
 
-    const settings = await eventRepository.getEventSettings();
-    const eventStatus = settings?.status || 'NOT_STARTED';
+    const eventStatus = await eventService.getEventStatus();
+    const currentMatchNumber = eventStatus.currentMatchNumber;
+    let currentMatchId = eventStatus.currentMatchId;
+    if (!currentMatchId) {
+      try {
+        const [mRow] = await db
+          .select({ id: competitionMatches.id })
+          .from(competitionMatches)
+          .where(eq(competitionMatches.matchNumber, currentMatchNumber))
+          .limit(1);
+        currentMatchId = mRow?.id || null;
+      } catch {}
+    }
 
     return res.json({
       authenticated: true,
       isSolo: true,
+      currentMatchNumber,
+      currentMatchId,
       participant: {
         id: resolvedParticipant.id,
         name: resolvedParticipant.name,
@@ -280,8 +325,22 @@ authRouter.get('/session', async (req: Request, res: Response) => {
         connectedAt: session.connectedAt,
         lastHeartbeatAt: session.lastHeartbeatAt,
       },
-      eventStatus,
-      durationMinutes: settings?.durationMinutes || 60,
+      eventStatus: eventStatus.status,
+      durationMinutes: eventStatus.durationMinutes,
+      authoritativeTimer: {
+        currentMatchId,
+        currentMatchNumber,
+        status: eventStatus.status,
+        durationMinutes: eventStatus.durationMinutes,
+        totalSeconds: eventStatus.totalSeconds,
+        remainingSeconds: eventStatus.remainingSeconds,
+        elapsedSeconds: eventStatus.elapsedSeconds,
+        startedAt: eventStatus.startedAt,
+        endedAt: eventStatus.endedAt,
+        pausedAt: eventStatus.pausedAt,
+        scheduledEndTime: eventStatus.scheduledEndTime,
+        serverTime: eventStatus.serverTime,
+      },
     });
   } catch (err) {
     console.error('Session restoration error:', err);
@@ -434,7 +493,7 @@ authRouter.get('/events', async (req: Request, res: Response) => {
   // Send initial event
   const sendStatus = async () => {
     try {
-      const settings = await eventRepository.getEventSettings();
+      const eventStatus = await eventService.getEventStatus();
       let connectedMemberCount = 1;
       let registeredMemberCount = 2;
 
@@ -448,8 +507,28 @@ authRouter.get('/events', async (req: Request, res: Response) => {
       }
 
       const payload = {
-        eventStatus: settings?.status || 'NOT_STARTED',
-        durationMinutes: settings?.durationMinutes || 60,
+        eventStatus: eventStatus.status,
+        status: eventStatus.status,
+        durationMinutes: eventStatus.durationMinutes,
+        totalSeconds: eventStatus.totalSeconds,
+        remainingSeconds: eventStatus.remainingSeconds,
+        elapsedSeconds: eventStatus.elapsedSeconds,
+        currentMatchNumber: eventStatus.currentMatchNumber,
+        currentMatchId: eventStatus.currentMatchId,
+        authoritativeTimer: {
+          currentMatchId: eventStatus.currentMatchId,
+          currentMatchNumber: eventStatus.currentMatchNumber,
+          status: eventStatus.status,
+          durationMinutes: eventStatus.durationMinutes,
+          totalSeconds: eventStatus.totalSeconds,
+          remainingSeconds: eventStatus.remainingSeconds,
+          elapsedSeconds: eventStatus.elapsedSeconds,
+          startedAt: eventStatus.startedAt,
+          endedAt: eventStatus.endedAt,
+          pausedAt: eventStatus.pausedAt,
+          scheduledEndTime: eventStatus.scheduledEndTime,
+          serverTime: eventStatus.serverTime,
+        },
         connectedMemberCount,
         registeredMemberCount,
         timestamp: new Date().toISOString(),

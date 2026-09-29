@@ -22,7 +22,7 @@ const handleRecordEvent = async (req: Request, res: Response, next: NextFunction
     const participantId = req.participant?.id || req.sessionRecord?.participantId || null;
     const teamId = req.sessionRecord?.teamId || null;
     const sessionId = req.sessionRecord?.id || null;
-    const { eventType, challengeId, metadata } = req.body || {};
+    const { eventType, challengeId, metadata, matchNumber, matchId } = req.body || {};
 
     if (!eventType || typeof eventType !== 'string') {
       return res.status(400).json({
@@ -32,6 +32,9 @@ const handleRecordEvent = async (req: Request, res: Response, next: NextFunction
       });
     }
 
+    const parsedMatchNumber = typeof matchNumber === 'number' ? matchNumber : undefined;
+    const parsedMatchId = typeof matchId === 'string' && matchId.trim() ? matchId.trim() : undefined;
+
     const result = await antiCheatService.recordClientEvent({
       participantId,
       teamId,
@@ -39,6 +42,8 @@ const handleRecordEvent = async (req: Request, res: Response, next: NextFunction
       challengeId: typeof challengeId === 'string' ? challengeId : null,
       eventType: eventType.trim().toUpperCase(),
       metadata: typeof metadata === 'object' && metadata !== null ? metadata : {},
+      matchNumber: parsedMatchNumber,
+      matchId: parsedMatchId,
     });
 
     if (result.throttled) {

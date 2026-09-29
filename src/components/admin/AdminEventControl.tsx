@@ -16,6 +16,7 @@ import {
   Sparkles,
   Trophy,
   RefreshCw,
+  Trash2,
 } from 'lucide-react';
 
 interface EventStatusResponse {
@@ -55,6 +56,10 @@ export const AdminEventControl: React.FC = () => {
   // Match History
   const [matches, setMatches] = useState<MatchRecord[]>([]);
   const [viewingLeaderboardMatch, setViewingLeaderboardMatch] = useState<MatchRecord | null>(null);
+  const [matchToDelete, setMatchToDelete] = useState<MatchRecord | null>(null);
+  const [showClearHistoryModal, setShowClearHistoryModal] = useState(false);
+  const [detailedHistoricalMatch, setDetailedHistoricalMatch] = useState<any | null>(null);
+  const [loadingMatchDetails, setLoadingMatchDetails] = useState(false);
 
   // End Event Confirmation Modal State
   const [showEndModal, setShowEndModal] = useState(false);
@@ -75,6 +80,84 @@ export const AdminEventControl: React.FC = () => {
       }
     } catch (err) {
       console.error('Failed to load matches list:', err);
+    }
+  };
+
+  const handleOpenMatchDetails = async (m: MatchRecord) => {
+    setViewingLeaderboardMatch(m);
+    setLoadingMatchDetails(true);
+    setDetailedHistoricalMatch(null);
+    try {
+      const res = await adminFetch(`/api/admin/matches/${m.matchNumber}`);
+      if (res.ok) {
+        const data = await res.json();
+        setDetailedHistoricalMatch(data);
+      }
+    } catch (err) {
+      console.error('Failed to load match details:', err);
+    } finally {
+      setLoadingMatchDetails(false);
+    }
+  };
+
+  const handleDeleteMatch = async () => {
+    if (!matchToDelete) return;
+    setActionInProgress(true);
+    try {
+      const res = await adminFetch(`/api/admin/matches/${matchToDelete.matchNumber}`, {
+        method: 'DELETE',
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setActionMessage({
+          type: 'success',
+          text: `Match #${matchToDelete.matchNumber} (${matchToDelete.name}) successfully deleted from history.`,
+        });
+        setMatchToDelete(null);
+        await fetchMatches();
+      } else {
+        setActionMessage({
+          type: 'error',
+          text: data.error || 'Failed to delete match.',
+        });
+      }
+    } catch (err: any) {
+      setActionMessage({
+        type: 'error',
+        text: err.message || 'Network error while deleting match.',
+      });
+    } finally {
+      setActionInProgress(false);
+    }
+  };
+
+  const handleClearHistory = async () => {
+    setActionInProgress(true);
+    try {
+      const res = await adminFetch('/api/admin/matches', {
+        method: 'DELETE',
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setActionMessage({
+          type: 'success',
+          text: data.message || 'Archived match history successfully cleared.',
+        });
+        setShowClearHistoryModal(false);
+        await fetchMatches();
+      } else {
+        setActionMessage({
+          type: 'error',
+          text: data.error || 'Failed to clear match history.',
+        });
+      }
+    } catch (err: any) {
+      setActionMessage({
+        type: 'error',
+        text: err.message || 'Network error while clearing match history.',
+      });
+    } finally {
+      setActionInProgress(false);
     }
   };
 
@@ -620,13 +703,26 @@ export const AdminEventControl: React.FC = () => {
             <History className="w-4 h-4 text-cyan-400" />
             <span>Match History &amp; Archived Competitions ({matches.length})</span>
           </div>
-          <button
-            onClick={() => fetchMatches()}
-            className="text-xs text-zinc-400 hover:text-zinc-200 flex items-center gap-1 cursor-pointer"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-            <span>Refresh</span>
-          </button>
+          <div className="flex items-center gap-2">
+            {matches.some((m) => m.matchNumber !== currentMatchNumber) && (
+              <button
+                id="admin-btn-clear-match-history"
+                onClick={() => setShowClearHistoryModal(true)}
+                className="text-xs text-red-400 hover:text-red-300 flex items-center gap-1 cursor-pointer transition-colors px-2 py-1 rounded bg-red-950/30 border border-red-900/60"
+                title="Delete all completed historical matches"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Clear History</span>
+              </button>
+            )}
+            <button
+              onClick={() => fetchMatches()}
+              className="text-xs text-zinc-400 hover:text-zinc-200 flex items-center gap-1 cursor-pointer"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>Refresh</span>
+            </button>
+          </div>
         </div>
 
         {matches.length === 0 ? (
@@ -644,7 +740,8 @@ export const AdminEventControl: React.FC = () => {
                   <th className="pb-2 font-semibold">Duration</th>
                   <th className="pb-2 font-semibold">Started At</th>
                   <th className="pb-2 font-semibold">Ended At</th>
-                  <th className="pb-2 font-semibold text-right">Archived Results</th>
+                  <th className="pb-2 font-semibold">Archived Results</th>
+                  <th className="pb-2 font-semibold text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-900">
@@ -678,17 +775,32 @@ export const AdminEventControl: React.FC = () => {
                     <td className="py-2.5 text-zinc-400">
                       {m.endedAt ? new Date(m.endedAt).toLocaleTimeString() : '-'}
                     </td>
+                    <td className="py-2.5">
+                      <button
+                        onClick={() => handleOpenMatchDetails(m)}
+                        className="px-2.5 py-1 bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-zinc-300 rounded text-[11px] inline-flex items-center gap-1 cursor-pointer transition-colors"
+                      >
+                        <Trophy className="w-3 h-3 text-amber-400" />
+                        <span>
+                          {m.finalLeaderboard && Array.isArray(m.finalLeaderboard) && m.finalLeaderboard.length > 0
+                            ? `View Standings (${m.finalLeaderboard.length})`
+                            : 'View Standings'}
+                        </span>
+                      </button>
+                    </td>
                     <td className="py-2.5 text-right">
-                      {m.finalLeaderboard && Array.isArray(m.finalLeaderboard) && m.finalLeaderboard.length > 0 ? (
-                        <button
-                          onClick={() => setViewingLeaderboardMatch(m)}
-                          className="px-2.5 py-1 bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-zinc-300 rounded text-[11px] inline-flex items-center gap-1 cursor-pointer transition-colors"
-                        >
-                          <Trophy className="w-3 h-3 text-amber-400" />
-                          <span>View Standings ({m.finalLeaderboard.length})</span>
-                        </button>
+                      {m.matchNumber === currentMatchNumber ? (
+                        <span className="text-[11px] text-zinc-500 italic">Active (Protected)</span>
                       ) : (
-                        <span className="text-zinc-600 text-[11px]">No snapshot</span>
+                        <button
+                          id={`admin-btn-delete-match-${m.matchNumber}`}
+                          onClick={() => setMatchToDelete(m)}
+                          className="px-2.5 py-1 bg-red-950/40 hover:bg-red-900/60 border border-red-800 text-red-300 rounded text-[11px] inline-flex items-center gap-1 cursor-pointer transition-colors"
+                          title={`Delete Match #${m.matchNumber} from history`}
+                        >
+                          <Trash2 className="w-3 h-3" />
+                          <span>Delete</span>
+                        </button>
                       )}
                     </td>
                   </tr>
@@ -919,54 +1031,274 @@ export const AdminEventControl: React.FC = () => {
           id="admin-match-leaderboard-modal"
           className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
         >
-          <div className="bg-zinc-950 border border-zinc-800 rounded-xl max-w-2xl w-full p-6 shadow-2xl relative font-mono max-h-[85vh] flex flex-col">
+          <div className="bg-zinc-950 border border-zinc-800 rounded-xl max-w-3xl w-full p-6 shadow-2xl relative font-mono max-h-[85vh] flex flex-col">
             <div className="flex items-center justify-between border-b border-zinc-800 pb-4 mb-4">
               <div>
                 <h3 className="text-base font-bold text-zinc-100 flex items-center gap-2">
                   <Trophy className="w-5 h-5 text-amber-400" />
-                  <span>Archived Standings: {viewingLeaderboardMatch.name} (Match #{viewingLeaderboardMatch.matchNumber})</span>
+                  <span>
+                    Archived Standings: {detailedHistoricalMatch?.name || viewingLeaderboardMatch.name} (Match #{detailedHistoricalMatch?.matchNumber || viewingLeaderboardMatch.matchNumber})
+                  </span>
                 </h3>
-                <span className="text-xs text-zinc-400">
-                  Status: {viewingLeaderboardMatch.status} &bull; Concluded: {viewingLeaderboardMatch.endedAt ? new Date(viewingLeaderboardMatch.endedAt).toLocaleString() : 'N/A'}
-                </span>
+                <div className="flex flex-wrap items-center gap-3 text-xs text-zinc-400 mt-1">
+                  <span>
+                    Status:{' '}
+                    <span className="font-semibold text-zinc-200">
+                      {detailedHistoricalMatch?.status || viewingLeaderboardMatch.status}
+                    </span>
+                  </span>
+                  <span>&bull;</span>
+                  <span>
+                    Started:{' '}
+                    {detailedHistoricalMatch?.startedAt
+                      ? new Date(detailedHistoricalMatch.startedAt).toLocaleTimeString()
+                      : viewingLeaderboardMatch.startedAt
+                      ? new Date(viewingLeaderboardMatch.startedAt).toLocaleTimeString()
+                      : 'N/A'}
+                  </span>
+                  <span>&bull;</span>
+                  <span>
+                    Concluded:{' '}
+                    {detailedHistoricalMatch?.endedAt
+                      ? new Date(detailedHistoricalMatch.endedAt).toLocaleTimeString()
+                      : viewingLeaderboardMatch.endedAt
+                      ? new Date(viewingLeaderboardMatch.endedAt).toLocaleTimeString()
+                      : 'N/A'}
+                  </span>
+                  <span>&bull;</span>
+                  <span>
+                    Duration:{' '}
+                    {detailedHistoricalMatch?.durationMinutes || viewingLeaderboardMatch.durationMinutes}m
+                  </span>
+                </div>
               </div>
               <button
-                onClick={() => setViewingLeaderboardMatch(null)}
+                onClick={() => {
+                  setViewingLeaderboardMatch(null);
+                  setDetailedHistoricalMatch(null);
+                }}
                 className="text-zinc-400 hover:text-zinc-200 text-xs px-2.5 py-1 bg-zinc-900 border border-zinc-800 rounded cursor-pointer"
               >
                 Close
               </button>
             </div>
 
+            {/* Match summary stats bar */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-4 text-xs">
+              <div className="p-2 rounded bg-zinc-900/60 border border-zinc-800 text-center">
+                <span className="text-zinc-500 block text-[10px] uppercase">Competitors</span>
+                <span className="text-zinc-200 font-bold">
+                  {detailedHistoricalMatch?.participantCount ?? (viewingLeaderboardMatch.finalLeaderboard?.length || 0)}
+                </span>
+              </div>
+              <div className="p-2 rounded bg-zinc-900/60 border border-zinc-800 text-center">
+                <span className="text-zinc-500 block text-[10px] uppercase">Total Solves</span>
+                <span className="text-cyan-400 font-bold">
+                  {detailedHistoricalMatch?.totalSolves ??
+                    viewingLeaderboardMatch.finalLeaderboard?.reduce(
+                      (acc: number, cur: any) => acc + (cur.problemsSolved ?? cur.challengesSolved ?? cur.solvedCount ?? 0),
+                      0
+                    ) ?? 0}
+                </span>
+              </div>
+              <div className="p-2 rounded bg-zinc-900/60 border border-zinc-800 text-center">
+                <span className="text-zinc-500 block text-[10px] uppercase">Top Score</span>
+                <span className="text-emerald-400 font-bold">
+                  {(() => {
+                    const lb = detailedHistoricalMatch?.finalLeaderboard || viewingLeaderboardMatch.finalLeaderboard;
+                    if (lb && lb.length > 0) {
+                      return `${lb[0].score ?? lb[0].totalScore ?? 0} pts`;
+                    }
+                    return '0 pts';
+                  })()}
+                </span>
+              </div>
+              <div className="p-2 rounded bg-zinc-900/60 border border-zinc-800 text-center">
+                <span className="text-zinc-500 block text-[10px] uppercase">Match Type</span>
+                <span className="text-purple-400 font-bold">
+                  {detailedHistoricalMatch?.isArchived || viewingLeaderboardMatch.status === 'ENDED'
+                    ? 'Archived Run'
+                    : 'Active Match'}
+                </span>
+              </div>
+            </div>
+
             <div className="overflow-y-auto flex-1">
-              {viewingLeaderboardMatch.finalLeaderboard && viewingLeaderboardMatch.finalLeaderboard.length > 0 ? (
-                <table className="w-full text-xs text-left">
-                  <thead>
-                    <tr className="border-b border-zinc-800 text-zinc-400">
-                      <th className="pb-2 font-semibold">Rank</th>
-                      <th className="pb-2 font-semibold">Competitor</th>
-                      <th className="pb-2 font-semibold text-center">Solves</th>
-                      <th className="pb-2 font-semibold text-right">Score</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-zinc-900">
-                    {viewingLeaderboardMatch.finalLeaderboard.map((t: any, idx: number) => (
-                      <tr key={t.participantId || t.teamId || idx} className="hover:bg-zinc-900/40">
-                        <td className="py-2.5 font-bold text-zinc-300">
-                          {idx === 0 ? '🥇 1' : idx === 1 ? '🥈 2' : idx === 2 ? '🥉 3' : `#${idx + 1}`}
-                        </td>
-                        <td className="py-2.5 font-semibold text-zinc-100">{t.participantName || t.name || t.teamName}</td>
-                        <td className="py-2.5 text-center text-zinc-300">{t.challengesSolved ?? t.solvedCount ?? 0}</td>
-                        <td className="py-2.5 text-right font-bold text-emerald-400">{t.totalScore ?? 0} pts</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              ) : (
-                <div className="p-8 text-center text-xs text-zinc-500">
-                  No final standings recorded for this match.
+              {loadingMatchDetails ? (
+                <div className="p-12 text-center text-xs text-zinc-400 flex flex-col items-center gap-2">
+                  <Loader2 className="w-5 h-5 animate-spin text-cyan-400" />
+                  <span>Loading authoritative historical match data...</span>
                 </div>
-              )}
+              ) : (() => {
+                  const lb = detailedHistoricalMatch?.finalLeaderboard || viewingLeaderboardMatch.finalLeaderboard;
+                  const hasData = detailedHistoricalMatch ? detailedHistoricalMatch.hasHistoricalData : (lb && lb.length > 0);
+
+                  if (hasData && lb && lb.length > 0) {
+                    return (
+                      <table className="w-full text-xs text-left">
+                        <thead>
+                          <tr className="border-b border-zinc-800 text-zinc-400">
+                            <th className="pb-2 font-semibold">Rank</th>
+                            <th className="pb-2 font-semibold">Competitor</th>
+                            <th className="pb-2 font-semibold text-center">Solves</th>
+                            <th className="pb-2 font-semibold text-right">Final Score</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-zinc-900">
+                          {lb.map((t: any, idx: number) => {
+                            const solves = t.problemsSolved ?? t.challengesSolved ?? t.solvedCount ?? 0;
+                            const score = t.score ?? t.totalScore ?? 0;
+                            return (
+                              <tr key={t.participantId || t.teamId || idx} className="hover:bg-zinc-900/40">
+                                <td className="py-2.5 font-bold text-zinc-300">
+                                  {idx === 0 ? '🥇 1' : idx === 1 ? '🥈 2' : idx === 2 ? '🥉 3' : `#${idx + 1}`}
+                                </td>
+                                <td className="py-2.5 font-semibold text-zinc-100">
+                                  {t.participantName || t.name || t.teamName}
+                                  {t.college && (
+                                    <span className="text-[10px] text-zinc-500 font-normal ml-2">
+                                      ({t.college})
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="py-2.5 text-center text-zinc-300 font-semibold">{solves}</td>
+                                <td className="py-2.5 text-right font-bold text-emerald-400">{score} pts</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    );
+                  }
+
+                  return (
+                    <div className="p-8 text-center text-xs text-zinc-500 border border-zinc-900 rounded-lg">
+                      <AlertCircle className="w-6 h-6 text-zinc-600 mx-auto mb-2" />
+                      <span>No historical result available for this match.</span>
+                    </div>
+                  );
+                })()}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Single Historical Match Confirmation Modal */}
+      {matchToDelete && (
+        <div
+          id="admin-delete-match-modal"
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
+        >
+          <div className="bg-zinc-950 border border-red-900/60 rounded-xl max-w-md w-full p-6 shadow-2xl relative font-mono">
+            <div className="flex items-center gap-3 mb-4 text-red-400">
+              <AlertTriangle className="w-6 h-6 text-red-400 shrink-0" />
+              <div>
+                <h3 className="text-base font-bold text-zinc-100">
+                  Delete Match #{matchToDelete.matchNumber}?
+                </h3>
+                <span className="text-xs text-zinc-400">{matchToDelete.name}</span>
+              </div>
+            </div>
+
+            <p className="text-xs text-zinc-300 leading-relaxed mb-4">
+              Are you sure you want to permanently delete{' '}
+              <strong className="text-white">Match #{matchToDelete.matchNumber} ({matchToDelete.name})</strong>{' '}
+              from match history?
+            </p>
+
+            <div className="bg-zinc-900/80 border border-zinc-800 rounded p-3 text-xs text-zinc-400 mb-6 space-y-1">
+              <div>&bull; Archived standings and completions will be deleted.</div>
+              <div>&bull; Historical submission logs for this match will be purged.</div>
+              <div>&bull; Participant accounts &amp; challenges remain intact.</div>
+              <div className="text-emerald-400 font-medium">&bull; Active competition match will not be affected.</div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setMatchToDelete(null)}
+                disabled={actionInProgress}
+                className="px-4 py-2 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 rounded text-xs cursor-pointer border border-zinc-800"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                id="admin-btn-confirm-delete-match"
+                onClick={handleDeleteMatch}
+                disabled={actionInProgress}
+                className="px-4 py-2 bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white font-bold rounded text-xs flex items-center gap-2 cursor-pointer shadow-lg shadow-red-950/50"
+              >
+                {actionInProgress ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Deleting Match #{matchToDelete.matchNumber}...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Confirm Delete</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Clear All Historical Matches Confirmation Modal */}
+      {showClearHistoryModal && (
+        <div
+          id="admin-clear-history-modal"
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
+        >
+          <div className="bg-zinc-950 border border-red-900/60 rounded-xl max-w-md w-full p-6 shadow-2xl relative font-mono">
+            <div className="flex items-center gap-3 mb-4 text-red-400">
+              <AlertTriangle className="w-6 h-6 text-red-400 shrink-0" />
+              <div>
+                <h3 className="text-base font-bold text-zinc-100">Clear Archived History?</h3>
+                <span className="text-xs text-zinc-400">Destructive History Operation</span>
+              </div>
+            </div>
+
+            <p className="text-xs text-zinc-300 leading-relaxed mb-4">
+              Are you sure you want to permanently clear all completed historical matches from the database?
+            </p>
+
+            <div className="bg-zinc-900/80 border border-zinc-800 rounded p-3 text-xs text-zinc-400 mb-6 space-y-1">
+              <div>&bull; All past match archives and snapshots will be removed.</div>
+              <div>&bull; Active Match #{currentMatchNumber} is strictly preserved.</div>
+              <div>&bull; Competitor accounts and challenge definitions remain intact.</div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setShowClearHistoryModal(false)}
+                disabled={actionInProgress}
+                className="px-4 py-2 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 rounded text-xs cursor-pointer border border-zinc-800"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                id="admin-btn-confirm-clear-history"
+                onClick={handleClearHistory}
+                disabled={actionInProgress}
+                className="px-4 py-2 bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white font-bold rounded text-xs flex items-center gap-2 cursor-pointer shadow-lg shadow-red-950/50"
+              >
+                {actionInProgress ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Clearing Archive...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Confirm Clear All</span>
+                  </>
+                )}
+              </button>
             </div>
           </div>
         </div>

@@ -14,6 +14,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { Terminal, Users, Clock, Radio, LogOut, Shield, AlertCircle, Play } from 'lucide-react';
+import { updateFromServer } from '../services/authoritativeTimer';
 
 interface WaitingRoomProps {
   team: {
@@ -55,11 +56,23 @@ export const WaitingRoom: React.FC<WaitingRoomProps> = ({
       sse.onmessage = (e) => {
         try {
           const data = JSON.parse(e.data);
-          if (data.eventStatus) {
-            setCurrentStatus(data.eventStatus);
-            if (data.eventStatus === 'RUNNING') {
+          const newStatus = data.status || data.eventStatus;
+          if (newStatus) {
+            setCurrentStatus(newStatus);
+            if (newStatus === 'RUNNING') {
               onEventStart();
             }
+          }
+          if (data.authoritativeTimer) {
+            updateFromServer(data.authoritativeTimer);
+          } else if (newStatus) {
+            updateFromServer({
+              status: newStatus,
+              currentMatchNumber: data.currentMatchNumber || data.matchNumber,
+              currentMatchId: data.currentMatchId || data.matchId,
+              remainingSeconds: data.remainingSeconds,
+              durationMinutes: data.durationMinutes,
+            });
           }
           if (typeof data.connectedMemberCount === 'number') {
             setConnectedCount(data.connectedMemberCount);

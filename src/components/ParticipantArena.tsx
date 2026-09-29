@@ -50,6 +50,13 @@ import {
   Maximize2,
   Minimize2,
 } from 'lucide-react';
+import {
+  useAuthoritativeTimer,
+  syncWithServer,
+  updateFromServer,
+  getTimerState,
+  formatTimerDisplay,
+} from '../services/authoritativeTimer';
 
 interface ParticipantArenaProps {
   team: {
@@ -59,6 +66,8 @@ interface ParticipantArenaProps {
     connectedMemberCount: number;
   };
   eventStatus: string;
+  currentMatchNumber?: number;
+  currentMatchId?: string | null;
   onLogout: () => void;
   onReturnToWaiting?: () => void;
 }
@@ -153,6 +162,9 @@ interface ExecutionResult {
 const arenaFetch = (url: string, options: RequestInit = {}) => {
   const token = typeof localStorage !== 'undefined' ? localStorage.getItem('bugrip_participant_token') : null;
   const headers = new Headers(options.headers || {});
+  if (!headers.has('Accept')) {
+    headers.set('Accept', 'application/json');
+  }
   if (token && !headers.has('Authorization')) {
     headers.set('Authorization', `Bearer ${token}`);
   }
@@ -169,13 +181,27 @@ const arenaFetch = (url: string, options: RequestInit = {}) => {
 export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
   team,
   eventStatus: initialStatus,
+  currentMatchNumber: initialMatchNumber = 1,
+  currentMatchId: initialMatchId = null,
   onLogout,
   onReturnToWaiting,
 }) => {
-  // Authoritative State
-  const [currentStatus, setCurrentStatus] = useState<string>(initialStatus || 'RUNNING');
-  const [remainingSeconds, setRemainingSeconds] = useState<number>(3600);
+  // Authoritative State Machine & Countdown Timer (Bug Sniper)
+  const timer = useAuthoritativeTimer({
+    status: initialStatus as any,
+    currentMatchNumber: initialMatchNumber,
+    currentMatchId: initialMatchId,
+  });
+
+  const currentStatus = timer.status;
+  const remainingSeconds = timer.remainingSeconds;
+  const activeMatchNumber = timer.currentMatchNumber;
+  const activeMatchId = timer.currentMatchId;
   const [loggingOut, setLoggingOut] = useState(false);
+  const activeMatchNumberRef = useRef(activeMatchNumber);
+  activeMatchNumberRef.current = activeMatchNumber;
+  const activeMatchIdRef = useRef(activeMatchId);
+  activeMatchIdRef.current = activeMatchId;
 
   // Team Progression & Member Counts
   const [connectedCount, setConnectedCount] = useState<number>(team.connectedMemberCount || 1);
@@ -276,13 +302,16 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
   const [alreadyCompletedAlert, setAlreadyCompletedAlert] = useState<boolean>(false);
   const previousCompletionRef = useRef<boolean>(false);
 
-  // Anti-Cheat & Client Integrity State (Fragment 12)
+  // Anti-Cheat & Client Integrity State (Fragment 12 & Fullscreen Gate)
   const [isFullscreen, setIsFullscreen] = useState<boolean>(() => {
     if (typeof document !== 'undefined') {
       return Boolean(document.fullscreenElement);
     }
     return false;
   });
+
+  // Strict Competition Gate: In RUNNING match, solving requires active fullscreen
+  const isFullscreenExited = currentStatus === 'RUNNING' && !isFullscreen;
 
   // Layout updates on fullscreen and active challenge changes
   useEffect(() => {
@@ -304,9 +333,13 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
           body: JSON.stringify({
             eventType,
             challengeId: activeChallengeId || undefined,
+            matchNumber: activeMatchNumberRef.current,
+            matchId: activeMatchIdRef.current,
             metadata: {
               ...metadata,
               activeChallengeId: activeChallengeId || undefined,
+              matchNumber: activeMatchNumberRef.current,
+              matchId: activeMatchIdRef.current,
               viewportWidth: typeof window !== 'undefined' ? window.innerWidth : 0,
               viewportHeight: typeof window !== 'undefined' ? window.innerHeight : 0,
               timestamp: Date.now(),
@@ -319,6 +352,13 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
     },
     [activeChallengeId]
   );
+
+  // Initial Fullscreen Registration on Mount (if browser is already fullscreen)
+  useEffect(() => {
+    if (typeof document !== 'undefined' && Boolean(document.fullscreenElement) && currentStatus === 'RUNNING') {
+      sendIntegrityEvent('FULLSCREEN_ENTER');
+    }
+  }, [currentStatus, sendIntegrityEvent]);
 
   // Toggle/Request Fullscreen
   const toggleFullscreen = useCallback(async () => {
@@ -470,40 +510,15 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
   // ===========================================================================
   const syncEventStatus = useCallback(async () => {
     try {
-      const res = await arenaFetch('/api/event/status');
-      if (res.ok) {
-        const data = await res.json();
-        if (data.status) {
-          setCurrentStatus(data.status);
-          if (data.status === 'NOT_STARTED' && onReturnToWaiting) {
-            onReturnToWaiting();
-          }
-        }
-        if (typeof data.remainingSeconds === 'number') {
-          setRemainingSeconds(Math.max(0, data.remainingSeconds));
-        }
+      await syncWithServer(true);
+      const state = getTimerState();
+      if (state.status === 'NOT_STARTED' && onReturnToWaiting) {
+        onReturnToWaiting();
       }
     } catch {
       // Network hiccup - preserve current state
     }
   }, [onReturnToWaiting]);
-
-  // Local authoritative tick interpolation (only ticks down when RUNNING and > 0)
-  useEffect(() => {
-    if (currentStatus !== 'RUNNING') return;
-
-    const tick = setInterval(() => {
-      setRemainingSeconds((prev) => {
-        if (prev <= 1) {
-          syncEventStatus();
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-
-    return () => clearInterval(tick);
-  }, [currentStatus, syncEventStatus]);
 
   // ===========================================================================
   // 2. Refresh Team Details & Shared Progression
@@ -530,6 +545,10 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
   const fetchProgression = useCallback(async () => {
     try {
       const res = await arenaFetch('/api/challenges');
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        return;
+      }
       if (res.ok) {
         const data = await res.json();
         if (data.success && data.data) {
@@ -549,7 +568,7 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
         }
       }
     } catch (err) {
-      console.error('Failed to load progression:', err);
+      console.warn('Failed to load progression:', err);
     }
   }, [activeChallengeId]);
 
@@ -587,6 +606,10 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
         const storedToken = typeof localStorage !== 'undefined' ? localStorage.getItem('bugrip_participant_token') : null;
         const sseUrl = storedToken ? `/api/teams/stream?token=${encodeURIComponent(storedToken)}` : '/api/teams/stream';
         eventSource = new EventSource(sseUrl, { withCredentials: true });
+
+        eventSource.onopen = () => {
+          syncWithServer(true);
+        };
 
         eventSource.addEventListener('team.init', (e: MessageEvent) => {
           try {
@@ -729,11 +752,53 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
           } catch {}
         });
 
+        const handleMatchReset = (data: any) => {
+          const newMatchNumber = data?.matchNumber;
+          const newMatchId = data?.matchId || null;
+          updateFromServer({
+            currentMatchNumber: newMatchNumber,
+            currentMatchId: newMatchId,
+            status: 'NOT_STARTED',
+            durationMinutes: data?.durationMinutes || 60,
+            totalSeconds: (data?.durationMinutes || 60) * 60,
+            remainingSeconds: (data?.durationMinutes || 60) * 60,
+          });
+          // New match started: reload active challenge to discard previous match's draft
+          if (activeChallengeIdRef.current) {
+            loadChallenge(activeChallengeIdRef.current);
+          }
+          if (onReturnToWaitingRef.current) {
+            onReturnToWaitingRef.current();
+          }
+        };
+
+        eventSource.addEventListener('match.reset', (e: MessageEvent) => {
+          try {
+            const data = JSON.parse(e.data);
+            handleMatchReset(data);
+          } catch {}
+        });
+
+        eventSource.addEventListener('match.deleted', (_e: MessageEvent) => {
+          try {
+            fetchProgressionRef.current();
+          } catch {}
+        });
+
         eventSource.addEventListener('event.status.changed', (e: MessageEvent) => {
           try {
             const data = JSON.parse(e.data);
-            if (data.status) {
-              setCurrentStatus(data.status);
+            if (data) {
+              updateFromServer({
+                status: data.status,
+                currentMatchNumber: data.matchNumber || data.currentMatchNumber,
+                currentMatchId: data.matchId || data.currentMatchId,
+                remainingSeconds: data.remainingSeconds,
+                durationMinutes: data.durationMinutes,
+                startedAt: data.startedAt,
+                endedAt: data.endedAt,
+                pausedAt: data.pausedAt,
+              });
               if (data.status === 'NOT_STARTED' && onReturnToWaitingRef.current) {
                 onReturnToWaitingRef.current();
               }
@@ -795,13 +860,98 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
   // ===========================================================================
   // 3. Challenge Loading & Local Draft Handling
   // ===========================================================================
-  const getDraftStorageKey = (challengeId: string) => `bugrip_draft_${team.id}_${challengeId}`;
+  // Clean up any legacy unscoped draft keys on mount to prevent leakage across matches
+  useEffect(() => {
+    if (typeof localStorage === 'undefined') return;
+    try {
+      const keysToRemove: string[] = [];
+      const prefix = `bugrip_draft_${team.id}_`;
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (!key) continue;
+        if (key.startsWith(prefix)) {
+          const suffix = key.slice(prefix.length);
+          // Scoped format is: bugrip_draft_${team.id}_${matchScope}_${challengeId}
+          // If suffix does not contain an underscore, it's an old unscoped key
+          if (!suffix.includes('_')) {
+            keysToRemove.push(key);
+          }
+        }
+        if (key === `bugrip_active_challenge_${team.id}`) {
+          keysToRemove.push(key);
+        }
+      }
+      keysToRemove.forEach((k) => localStorage.removeItem(k));
+    } catch {}
+  }, [team.id]);
+
+  // Synchronize when parent passes new match info
+  useEffect(() => {
+    if (
+      initialMatchNumber &&
+      initialMatchNumber !== activeMatchNumberRef.current
+    ) {
+      updateFromServer({
+        currentMatchNumber: initialMatchNumber,
+        currentMatchId: initialMatchId || null,
+      });
+      if (challengeDetails) {
+        const draftKey = getDraftStorageKey(
+          challengeDetails.id,
+          initialMatchId,
+          initialMatchNumber
+        );
+        const newMatchDraft =
+          typeof localStorage !== 'undefined'
+            ? localStorage.getItem(draftKey)
+            : null;
+        if (newMatchDraft !== null && newMatchDraft.trim() !== '') {
+          setEditorSource(newMatchDraft);
+          setHasDraft(true);
+        } else {
+          setEditorSource(challengeDetails.starterCode || '');
+          setHasDraft(false);
+        }
+      }
+    } else if (initialMatchId && initialMatchId !== activeMatchIdRef.current) {
+      updateFromServer({
+        currentMatchId: initialMatchId,
+      });
+    }
+  }, [initialMatchNumber, initialMatchId]);
+
+  const getAuthoritativeMatchScope = (
+    mId: string | null = activeMatchId,
+    mNum: number = activeMatchNumber
+  ) => {
+    return mId && mId.trim() !== '' ? mId : `m${mNum}`;
+  };
+
+  const getDraftStorageKey = (
+    challengeId: string,
+    mId: string | null = activeMatchId,
+    mNum: number = activeMatchNumber
+  ) => {
+    const matchScope = getAuthoritativeMatchScope(mId, mNum);
+    return `bugrip_draft_${team.id}_${matchScope}_${challengeId}`;
+  };
+
+  const getActiveChallengeStorageKey = (
+    mId: string | null = activeMatchId,
+    mNum: number = activeMatchNumber
+  ) => {
+    const matchScope = getAuthoritativeMatchScope(mId, mNum);
+    return `bugrip_active_challenge_${team.id}_${matchScope}`;
+  };
 
   const loadChallenge = async (id: string) => {
     setActiveChallengeId(id);
     if (typeof localStorage !== 'undefined') {
       try {
-        localStorage.setItem(`bugrip_active_challenge_${team.id}`, id);
+        localStorage.setItem(
+          getActiveChallengeStorageKey(activeMatchId, activeMatchNumber),
+          id
+        );
       } catch {}
     }
     setLoadingChallenge(true);
@@ -823,13 +973,28 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
         setChallengeDetails(details);
         previousCompletionRef.current = details.status === 'COMPLETED';
 
-        // Draft restoration logic:
-        const draftKey = getDraftStorageKey(details.id);
-        const savedDraft = localStorage.getItem(draftKey);
+        let currentMId = activeMatchId;
+        let currentMNum = activeMatchNumber;
+        if (data.matchId && data.matchId !== activeMatchId) {
+          currentMId = data.matchId;
+          updateFromServer({ currentMatchId: data.matchId });
+        }
+        if (data.matchNumber && data.matchNumber !== activeMatchNumber) {
+          currentMNum = data.matchNumber;
+          updateFromServer({ currentMatchNumber: data.matchNumber });
+        }
+
+        // Draft restoration logic: strictly scoped to current match + participant + challenge
+        const draftKey = getDraftStorageKey(details.id, currentMId, currentMNum);
+        const savedDraft =
+          typeof localStorage !== 'undefined'
+            ? localStorage.getItem(draftKey)
+            : null;
         if (savedDraft !== null && savedDraft.trim() !== '') {
           setEditorSource(savedDraft);
           setHasDraft(true);
         } else {
+          // Authoritative canonical starter code for fresh match/challenge
           setEditorSource(details.starterCode || '');
           setHasDraft(false);
         }
@@ -881,11 +1046,15 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
     }
   };
 
-  // Automatically select first available challenge or restore saved selection
+  // Automatically select first available challenge or restore saved selection for active match
   useEffect(() => {
     if (!activeChallengeId && progression && progression.rounds.length > 0) {
       if (typeof localStorage !== 'undefined') {
-        const savedActiveId = localStorage.getItem(`bugrip_active_challenge_${team.id}`);
+        const activeKey = getActiveChallengeStorageKey(
+          activeMatchId,
+          activeMatchNumber
+        );
+        const savedActiveId = localStorage.getItem(activeKey);
         if (savedActiveId) {
           const savedChal = progression.challenges.find(
             (c) => c.id === savedActiveId && c.status !== 'LOCKED'
@@ -897,30 +1066,46 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
         }
       }
 
-      const easyRound = progression.rounds.find((r) => r.slug === 'easy') || progression.rounds[0];
+      const easyRound =
+        progression.rounds.find((r) => r.slug === 'easy') ||
+        progression.rounds[0];
       if (easyRound && easyRound.isUnlocked) {
-        const firstChallenge = progression.challenges.find((c) => c.roundId === easyRound.id);
+        const firstChallenge = progression.challenges.find(
+          (c) => c.roundId === easyRound.id
+        );
         if (firstChallenge && firstChallenge.status !== 'LOCKED') {
           loadChallenge(firstChallenge.id);
         }
       }
     }
-  }, [progression, activeChallengeId, team.id]);
+  }, [
+    progression,
+    activeChallengeId,
+    team.id,
+    activeMatchId,
+    activeMatchNumber,
+  ]);
 
-  // Handle Monaco editor changes & draft caching
+  // Handle Monaco editor changes & draft caching scoped to current match
   const handleEditorChange = (value: string | undefined) => {
     const updated = value ?? '';
     setEditorSource(updated);
     if (activeChallengeId) {
-      const draftKey = getDraftStorageKey(activeChallengeId);
-      localStorage.setItem(draftKey, updated);
+      const draftKey = getDraftStorageKey(
+        activeChallengeId,
+        activeMatchId,
+        activeMatchNumber
+      );
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem(draftKey, updated);
+      }
       setHasDraft(true);
     }
   };
 
   // Reset editor to authoritative starter code
   const handleResetStarterCode = () => {
-    if (!challengeDetails) return;
+    if (!challengeDetails || isPaused || isEnded || isFullscreenExited) return;
     if (
       window.confirm(
         'Are you sure you want to reset to the original starter code? Any unsaved local edits will be cleared.'
@@ -928,7 +1113,15 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
     ) {
       setEditorSource(challengeDetails.starterCode);
       if (activeChallengeId) {
-        localStorage.removeItem(getDraftStorageKey(activeChallengeId));
+        if (typeof localStorage !== 'undefined') {
+          localStorage.removeItem(
+            getDraftStorageKey(
+              activeChallengeId,
+              activeMatchId,
+              activeMatchNumber
+            )
+          );
+        }
       }
       setHasDraft(false);
     }
@@ -980,6 +1173,10 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
     if (!activeChallengeId || !challengeDetails) return;
     if (currentStatus !== 'RUNNING') {
       setRunError(`Cannot run code while competition is ${currentStatus}.`);
+      return;
+    }
+    if (isFullscreenExited) {
+      setRunError('Active arena fullscreen is required to execute code.');
       return;
     }
     if (challengeDetails.status === 'LOCKED') {
@@ -1169,6 +1366,11 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
       return;
     }
 
+    if (isFullscreenExited) {
+      setFlagSubmitError('Active arena fullscreen is required to submit flags.');
+      return;
+    }
+
     setSubmittingFlag(true);
     setFlagSubmitError(null);
     setFlagSubmitSuccess(null);
@@ -1252,6 +1454,28 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
 
   const isPaused = currentStatus === 'PAUSED';
   const isEnded = currentStatus === 'ENDED';
+
+  if (currentStatus === 'NOT_STARTED') {
+    return (
+      <div id="arena-locked-root" className="w-full max-w-2xl mx-auto py-16 px-4 text-center font-mono">
+        <div className="bg-zinc-950 border border-amber-500/40 rounded-2xl p-8 shadow-2xl space-y-4">
+          <Lock className="w-12 h-12 text-amber-400 mx-auto animate-pulse" />
+          <h2 className="text-xl font-black text-white tracking-wider">ARENA LOCKED</h2>
+          <p className="text-xs text-zinc-400 leading-relaxed max-w-md mx-auto">
+            The competition has not started yet. Coding challenges and execution environments are locked until the organizer officially starts the match.
+          </p>
+          <div className="pt-4">
+            <button
+              onClick={onReturnToWaiting}
+              className="px-6 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs tracking-wider transition-all cursor-pointer"
+            >
+              RETURN TO WAITING ROOM
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // Derived Round & Challenges Navigation
   const currentRound =
@@ -1376,7 +1600,7 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
                   : 'text-emerald-400'
               }`}
             >
-              {formatTime(remainingSeconds)}
+              {formatTimerDisplay(remainingSeconds)}
             </div>
           </div>
 
@@ -1422,6 +1646,44 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
               title="Dismiss Notice"
             >
               ✕
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* BLOCKING FULLSCREEN-REQUIRED UI (Fragment 12 & Fullscreen Gate)           */}
+      {/* ========================================================================= */}
+      {isFullscreenExited && (
+        <div
+          id="arena-fullscreen-required-overlay"
+          data-testid="arena-fullscreen-required-overlay"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-4 animate-in fade-in duration-200"
+        >
+          <div
+            id="arena-fullscreen-required-modal"
+            data-testid="arena-fullscreen-required-modal"
+            className="max-w-md w-full rounded-2xl bg-zinc-900 border border-amber-500/70 p-6 text-center shadow-2xl space-y-4"
+          >
+            <div className="mx-auto w-14 h-14 rounded-full bg-amber-500/10 border border-amber-500/40 flex items-center justify-center">
+              <Maximize2 className="w-7 h-7 text-amber-400" />
+            </div>
+            <div>
+              <h2 className="text-lg font-black tracking-wide text-zinc-100 uppercase">
+                Fullscreen Mode Required
+              </h2>
+              <p className="text-xs text-zinc-400 mt-2 leading-relaxed">
+                A participant in a RUNNING match may solve, execute, and submit only while in arena fullscreen mode. Solving controls and submissions are locked until fullscreen is restored.
+              </p>
+            </div>
+            <button
+              id="arena-restore-fullscreen-btn"
+              data-testid="arena-restore-fullscreen-btn"
+              onClick={toggleFullscreen}
+              className="w-full py-3 px-4 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-black text-sm tracking-wide transition-all shadow-lg active:scale-98 cursor-pointer flex items-center justify-center gap-2"
+            >
+              <Maximize2 className="w-4 h-4" />
+              <span>Enter Fullscreen to Resume Solving</span>
             </button>
           </div>
         </div>
@@ -1787,8 +2049,17 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
                     <button
                       id="arena-reset-code-btn"
                       onClick={handleResetStarterCode}
-                      className="px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-750 text-zinc-300 hover:text-white text-[11px] font-bold border border-zinc-700 flex items-center gap-1.5 transition-colors cursor-pointer"
-                      title="Reset editor back to initial buggy Java code"
+                      disabled={isPaused || isEnded || isFullscreenExited}
+                      className={`px-2.5 py-1 rounded text-[11px] font-bold border flex items-center gap-1.5 transition-colors ${
+                        isPaused || isEnded || isFullscreenExited
+                          ? 'bg-zinc-900 text-zinc-600 border-zinc-800 cursor-not-allowed opacity-50'
+                          : 'bg-zinc-800 hover:bg-zinc-750 text-zinc-300 hover:text-white border-zinc-700 cursor-pointer'
+                      }`}
+                      title={
+                        isPaused || isEnded || isFullscreenExited
+                          ? 'Reset disabled while fullscreen or competition is inactive'
+                          : 'Reset editor back to initial buggy Java code'
+                      }
                     >
                       <RotateCcw className="w-3 h-3" />
                       <span>Reset Buggy Code</span>
@@ -1829,7 +2100,7 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
                       cursorBlinking: 'blink',
                       cursorStyle: 'line',
                       cursorWidth: 2,
-                      readOnly: isPaused || isEnded,
+                      readOnly: isPaused || isEnded || isFullscreenExited,
                     }}
                   />
                 </div>
@@ -1856,13 +2127,14 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
                         submittingRun ||
                         isPaused ||
                         isEnded ||
+                        isFullscreenExited ||
                         challengeDetails.status === 'LOCKED' ||
                         !editorSource.trim()
                       }
                       className={`px-5 py-2 rounded-xl font-bold font-mono text-xs flex items-center gap-2 transition-all cursor-pointer shadow-lg ${
                         submittingRun
                           ? 'bg-blue-600 text-white opacity-80 cursor-wait'
-                          : isPaused || isEnded || challengeDetails.status === 'LOCKED'
+                          : isPaused || isEnded || isFullscreenExited || challengeDetails.status === 'LOCKED'
                           ? 'bg-zinc-800 text-zinc-500 border border-zinc-700 cursor-not-allowed'
                           : 'bg-emerald-500 hover:bg-emerald-400 text-black shadow-emerald-500/20 active:scale-95'
                       }`}
@@ -2150,7 +2422,7 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
                           setFlagInput(flagText);
                           handleSubmitFlag(flagText);
                         }}
-                        disabled={submittingFlag || isPaused || isEnded}
+                        disabled={submittingFlag || isPaused || isEnded || isFullscreenExited}
                         className="px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer shadow-lg shadow-emerald-500/20 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         <Send className="w-3.5 h-3.5 fill-current" />
@@ -2171,8 +2443,8 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
                           value={flagInput}
                           onChange={(e) => setFlagInput(e.target.value)}
                           placeholder="DBG{YOUR_SOLVED_FLAG_HERE}"
-                          disabled={submittingFlag || isPaused || isEnded}
-                          className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-700 focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 text-xs font-mono text-zinc-100 placeholder:text-zinc-600 outline-none transition-all"
+                          disabled={submittingFlag || isPaused || isEnded || isFullscreenExited}
+                          className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-700 focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 text-xs font-mono text-zinc-100 placeholder:text-zinc-600 outline-none transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                         />
                       </div>
 
@@ -2185,12 +2457,13 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
                           !flagInput.trim() ||
                           isPaused ||
                           isEnded ||
+                          isFullscreenExited ||
                           challengeDetails.status === 'COMPLETED'
                         }
                         className={`px-5 py-2.5 rounded-xl font-bold font-mono text-xs flex items-center justify-center gap-2 transition-all cursor-pointer shrink-0 ${
                           submittingFlag
                             ? 'bg-blue-600 text-white opacity-80 cursor-wait'
-                            : !flagInput.trim() || isPaused || isEnded
+                            : !flagInput.trim() || isPaused || isEnded || isFullscreenExited
                             ? 'bg-zinc-800 text-zinc-500 border border-zinc-700 cursor-not-allowed'
                             : 'bg-emerald-500 hover:bg-emerald-400 text-black shadow-lg shadow-emerald-500/20 active:scale-95'
                         }`}

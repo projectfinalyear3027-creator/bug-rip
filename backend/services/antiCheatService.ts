@@ -20,6 +20,9 @@ export class AntiCheatService {
   // In-memory throttling map: `${teamId}:${sessionId}:${eventType}` -> ThrottleEntry
   private throttleMap = new Map<string, ThrottleEntry>();
 
+  // In-memory registry of verified participant fullscreen states
+  private participantFullscreenMap = new Map<string, boolean>();
+
   // Configuration constants
   private readonly DEBOUNCE_MS = 800; // Ignore duplicates within 800ms
   private readonly MAX_EVENTS_PER_MINUTE = 40; // Max events per session per 60s
@@ -30,6 +33,63 @@ export class AntiCheatService {
    */
   clearThrottleCache() {
     this.throttleMap.clear();
+    this.participantFullscreenMap.clear();
+  }
+
+  /**
+   * Sets the authoritative arena fullscreen state for a participant/team/session.
+   */
+  setParticipantFullscreen(
+    identity: { participantId?: string | null; teamId?: string | null; sessionId?: string | null },
+    isFullscreen: boolean
+  ): void {
+    if (identity.sessionId) {
+      this.participantFullscreenMap.set(`sess:${identity.sessionId}`, isFullscreen);
+    }
+    if (identity.participantId) {
+      this.participantFullscreenMap.set(`part:${identity.participantId}`, isFullscreen);
+    }
+    if (identity.teamId) {
+      this.participantFullscreenMap.set(`team:${identity.teamId}`, isFullscreen);
+    }
+  }
+
+  /**
+   * Directly sets the authoritative arena fullscreen state for any identifier (teamId or participantId).
+   */
+  setParticipantFullscreenDirect(entityId: string, isFullscreen: boolean): void {
+    this.participantFullscreenMap.set(`part:${entityId}`, isFullscreen);
+    this.participantFullscreenMap.set(`team:${entityId}`, isFullscreen);
+    this.participantFullscreenMap.set(`sess:${entityId}`, isFullscreen);
+  }
+
+  /**
+   * Checks whether the participant is currently in verified arena fullscreen.
+   * A participant in a RUNNING match may execute or submit ONLY while verified in fullscreen.
+   */
+  isParticipantInFullscreen(
+    participantId?: string | null,
+    teamId?: string | null,
+    sessionId?: string | null
+  ): boolean {
+    if (sessionId && this.participantFullscreenMap.has(`sess:${sessionId}`)) {
+      return Boolean(this.participantFullscreenMap.get(`sess:${sessionId}`));
+    }
+    if (participantId && this.participantFullscreenMap.has(`part:${participantId}`)) {
+      return Boolean(this.participantFullscreenMap.get(`part:${participantId}`));
+    }
+    if (teamId && this.participantFullscreenMap.has(`team:${teamId}`)) {
+      return Boolean(this.participantFullscreenMap.get(`team:${teamId}`));
+    }
+    // Default to false: fullscreen must be confirmed via FULLSCREEN_ENTER
+    return false;
+  }
+
+  /**
+   * Clear all stored fullscreen states (for testing and isolation).
+   */
+  clearFullscreenMap(): void {
+    this.participantFullscreenMap.clear();
   }
 
   /**
@@ -43,6 +103,8 @@ export class AntiCheatService {
     challengeId?: string | null;
     eventType: string;
     metadata?: Record<string, any>;
+    matchNumber?: number;
+    matchId?: string | null;
   }): Promise<{
     recorded: boolean;
     throttled?: boolean;
@@ -67,6 +129,8 @@ export class AntiCheatService {
       'SESSION_REJECTED',
       'HEARTBEAT_TIMEOUT',
       'COPY_PASTE_FLAG',
+      'ARENA_ROUTE_BLOCKED',
+      'LEAVE_ATTEMPT',
     ];
 
     if (!validEventTypes.includes(params.eventType as AntiCheatEventType)) {
@@ -128,6 +192,27 @@ export class AntiCheatService {
       }
     }
 
+    // Authoritative Fullscreen State Tracking: Update verified fullscreen gate state
+    if (eventType === 'FULLSCREEN_ENTER') {
+      this.setParticipantFullscreen(
+        {
+          participantId: params.participantId,
+          teamId: params.teamId,
+          sessionId: params.sessionId,
+        },
+        true
+      );
+    } else if (eventType === 'FULLSCREEN_EXIT') {
+      this.setParticipantFullscreen(
+        {
+          participantId: params.participantId,
+          teamId: params.teamId,
+          sessionId: params.sessionId,
+        },
+        false
+      );
+    }
+
     // Determine appropriate default action (non-punitive for normal focus restoration and viewport changes)
     let actionTaken: AntiCheatAction = 'RECORDED_VIOLATION';
     if (
@@ -176,6 +261,8 @@ export class AntiCheatService {
       eventType,
       actionTaken,
       metadata: sanitizedMetadata,
+      matchNumber: params.matchNumber,
+      matchId: params.matchId,
     });
 
     return {
@@ -208,10 +295,11 @@ export class AntiCheatService {
   }
 
   /**
-   * Reset throttle map (useful for test environments or cache clearing).
+   * Reset throttle map and fullscreen registry (useful for test environments or cache clearing).
    */
   clearThrottleMap(): void {
     this.throttleMap.clear();
+    this.clearFullscreenMap();
   }
 }
 

@@ -15,6 +15,7 @@ import { teamChallengeRepository } from '../repositories/teamChallengeRepository
 import { requireParticipantAuth } from '../middleware/authMiddleware.ts';
 import { executionQueue } from '../../execution-worker/queue.ts';
 import { completionService } from '../services/completionService.ts';
+import { antiCheatService } from '../services/antiCheatService.ts';
 import { assertNoForbiddenKeys } from '../rules/participantDataSecurity.ts';
 import { executionRateLimiter, flagSubmissionRateLimiter } from '../middleware/rateLimiter.ts';
 
@@ -29,11 +30,14 @@ challengeRouter.get(
   requireParticipantAuth,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
+      const eventStatus = await eventService.getEventStatus();
       const participantId = req.participant?.id || req.team!.id;
       const progress = await eventService.getTeamAvailableChallenges(participantId);
       return res.json({
         success: true,
         data: progress,
+        matchId: eventStatus.currentMatchId,
+        matchNumber: eventStatus.currentMatchNumber,
       });
     } catch (err) {
       next(err);
@@ -73,6 +77,8 @@ challengeRouter.get(
       return res.json({
         success: true,
         data: details,
+        matchId: eventStatus.currentMatchId,
+        matchNumber: eventStatus.currentMatchNumber,
       });
     } catch (err) {
       next(err);
@@ -116,6 +122,23 @@ export async function handleRunExecution(req: Request, res: Response, next: Next
             ? 'EVENT_NOT_STARTED'
             : 'ACTION_DISALLOWED',
       });
+    }
+
+    // 1b. Fullscreen Solving Gatekeeper
+    // A participant in a RUNNING match may execute/submit ONLY while verified in arena fullscreen.
+    if (gatekeeper.status === 'RUNNING') {
+      const isFullscreen = antiCheatService.isParticipantInFullscreen(
+        participantId,
+        teamId,
+        req.sessionRecord?.id
+      );
+      if (!isFullscreen) {
+        return res.status(403).json({
+          success: false,
+          error: 'Active arena fullscreen is required to execute code.',
+          code: 'FULLSCREEN_REQUIRED',
+        });
+      }
     }
 
     // 2. Challenge Existence and Active Status Check
@@ -278,66 +301,105 @@ challengeRouter.get(
 /**
  * POST /api/challenges/:id/submit-flag
  * Submits revealed CTF flag for authoritative verification and atomic challenge completion.
+ * Enforces active arena fullscreen gate during RUNNING state.
  */
+export async function handleSubmitFlag(req: Request, res: Response, next: NextFunction) {
+  try {
+    const participantId = req.participant?.id || req.team!.id;
+    const teamId = req.team!.id;
+    const challengeId = req.params.id;
+    const { flag, executionId } = req.body || {};
+
+    if (!flag || typeof flag !== 'string') {
+      return res.status(400).json({
+        success: false,
+        error: 'Flag is required.',
+        code: 'FLAG_REQUIRED',
+      });
+    }
+
+    // 1. Authoritative Event State Gatekeeper
+    const gatekeeper = await eventService.isCompetitionActionAllowed(participantId);
+    if (!gatekeeper.allowed) {
+      return res.status(403).json({
+        success: false,
+        error: gatekeeper.reason || 'Competition action not allowed in current state.',
+        code:
+          gatekeeper.status === 'PAUSED'
+            ? 'EVENT_PAUSED'
+            : gatekeeper.status === 'ENDED'
+            ? 'EVENT_ENDED'
+            : gatekeeper.status === 'NOT_STARTED'
+            ? 'EVENT_NOT_STARTED'
+            : 'ACTION_DISALLOWED',
+      });
+    }
+
+    // 1b. Fullscreen Solving Gatekeeper
+    // A participant in a RUNNING match may execute/submit ONLY while verified in arena fullscreen.
+    if (gatekeeper.status === 'RUNNING') {
+      const isFullscreen = antiCheatService.isParticipantInFullscreen(
+        participantId,
+        teamId,
+        req.sessionRecord?.id
+      );
+      if (!isFullscreen) {
+        return res.status(403).json({
+          success: false,
+          error: 'Active arena fullscreen is required to submit flags.',
+          code: 'FULLSCREEN_REQUIRED',
+        });
+      }
+    }
+
+    const result = await completionService.submitFlag({
+      participantId,
+      teamId,
+      challengeId,
+      submittedFlag: flag,
+      sessionId: req.sessionRecord?.id,
+      executionId,
+      requireFullscreen: true,
+    });
+
+    if (!result.success) {
+      const statusCode =
+        result.code === 'ALREADY_COMPLETED' ||
+        result.code === 'TEAMMATE_ALREADY_COMPLETED'
+          ? 409
+          : result.code === 'EVENT_PAUSED' ||
+            result.code === 'EVENT_ENDED' ||
+            result.code === 'EVENT_NOT_STARTED' ||
+            result.code === 'CHALLENGE_LOCKED' ||
+            result.code === 'FULLSCREEN_REQUIRED'
+          ? 403
+          : result.code === 'CHALLENGE_NOT_FOUND'
+          ? 404
+          : 400;
+
+      return res.status(statusCode).json({
+        success: false,
+        error: result.message,
+        code: result.code,
+        alreadyCompleted: result.alreadyCompleted,
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: result.message,
+      data: result.data,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
 challengeRouter.post(
   '/:id/submit-flag',
   requireParticipantAuth,
   flagSubmissionRateLimiter,
-  async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const participantId = req.participant?.id || req.team!.id;
-      const teamId = req.team!.id;
-      const challengeId = req.params.id;
-      const { flag, executionId } = req.body || {};
-
-      if (!flag || typeof flag !== 'string') {
-        return res.status(400).json({
-          success: false,
-          error: 'Flag is required.',
-          code: 'FLAG_REQUIRED',
-        });
-      }
-
-      const result = await completionService.submitFlag({
-        participantId,
-        teamId,
-        challengeId,
-        submittedFlag: flag,
-        sessionId: req.sessionRecord?.id,
-        executionId,
-      });
-
-      if (!result.success) {
-        const statusCode =
-          result.code === 'ALREADY_COMPLETED' ||
-          result.code === 'TEAMMATE_ALREADY_COMPLETED'
-            ? 409
-            : result.code === 'EVENT_PAUSED' ||
-              result.code === 'EVENT_ENDED' ||
-              result.code === 'EVENT_NOT_STARTED' ||
-              result.code === 'CHALLENGE_LOCKED'
-            ? 403
-            : result.code === 'CHALLENGE_NOT_FOUND'
-            ? 404
-            : 400;
-
-        return res.status(statusCode).json({
-          success: false,
-          error: result.message,
-          code: result.code,
-          alreadyCompleted: result.alreadyCompleted,
-        });
-      }
-
-      return res.json({
-        success: true,
-        message: result.message,
-        data: result.data,
-      });
-    } catch (err) {
-      next(err);
-    }
-  }
+  handleSubmitFlag
 );
 
 /**

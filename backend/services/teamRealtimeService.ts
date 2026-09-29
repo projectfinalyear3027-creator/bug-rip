@@ -42,6 +42,9 @@ export class TeamRealtimeService {
 
   constructor() {
     this.startSafetyNet();
+    leaderboardRealtimeService.onEventStatusChanged = (statusData) => {
+      this.broadcastGlobal('event.status.changed', statusData);
+    };
   }
 
   private startSafetyNet() {

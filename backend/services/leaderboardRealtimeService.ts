@@ -122,6 +122,8 @@ export class LeaderboardRealtimeService {
     }
   }
 
+  public onEventStatusChanged?: (statusData: any) => void;
+
   /**
    * Broadcast authoritative event lifecycle transitions (START, PAUSE, RESUME, END)
    */
@@ -134,6 +136,11 @@ export class LeaderboardRealtimeService {
     timestamp: string;
   }) {
     this.broadcast('event.status.changed', statusData);
+    if (this.onEventStatusChanged) {
+      try {
+        this.onEventStatusChanged(statusData);
+      } catch {}
+    }
   }
 
   /**

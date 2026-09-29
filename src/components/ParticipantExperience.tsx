@@ -18,6 +18,7 @@ import { WaitingRoom } from './WaitingRoom';
 import { ParticipantArena } from './ParticipantArena';
 import { Loader2 } from 'lucide-react';
 import { ThemeId } from '../types';
+import { updateFromServer } from '../services/authoritativeTimer';
 
 interface AuthenticatedTeam {
   id: string;
@@ -34,6 +35,8 @@ export const ParticipantExperience: React.FC<ParticipantExperienceProps> = () =>
   const [loadingSession, setLoadingSession] = useState<boolean>(true);
   const [authenticatedTeam, setAuthenticatedTeam] = useState<AuthenticatedTeam | null>(null);
   const [eventStatus, setEventStatus] = useState<string>('NOT_STARTED');
+  const [currentMatchNumber, setCurrentMatchNumber] = useState<number>(1);
+  const [currentMatchId, setCurrentMatchId] = useState<string | null>(null);
   const [participantRoute, setParticipantRoute] = useState<'LOGIN' | 'WAITING' | 'ARENA'>('LOGIN');
 
   // 1. Session Restoration on Initial Mount
@@ -57,6 +60,15 @@ export const ParticipantExperience: React.FC<ParticipantExperienceProps> = () =>
           if (data.authenticated && data.team) {
             setAuthenticatedTeam(data.team);
             setEventStatus(data.eventStatus || 'NOT_STARTED');
+            if (data.currentMatchNumber) {
+              setCurrentMatchNumber(data.currentMatchNumber);
+            }
+            if (data.currentMatchId) {
+              setCurrentMatchId(data.currentMatchId);
+            }
+            if (data.authoritativeTimer) {
+              updateFromServer(data.authoritativeTimer);
+            }
 
             if (data.eventStatus && data.eventStatus !== 'NOT_STARTED') {
               setParticipantRoute('ARENA');
@@ -90,12 +102,30 @@ export const ParticipantExperience: React.FC<ParticipantExperienceProps> = () =>
     team: AuthenticatedTeam;
     eventStatus: string;
     sessionToken?: string;
+    currentMatchNumber?: number;
+    currentMatchId?: string | null;
+    authoritativeTimer?: any;
   }) => {
     if (data.sessionToken) {
       localStorage.setItem('bugrip_participant_token', data.sessionToken);
     }
     setAuthenticatedTeam(data.team);
     setEventStatus(data.eventStatus);
+    if (data.currentMatchNumber) {
+      setCurrentMatchNumber(data.currentMatchNumber);
+    }
+    if (data.currentMatchId) {
+      setCurrentMatchId(data.currentMatchId);
+    }
+    if (data.authoritativeTimer) {
+      updateFromServer(data.authoritativeTimer);
+    } else {
+      updateFromServer({
+        status: data.eventStatus as any,
+        currentMatchNumber: data.currentMatchNumber || 1,
+        currentMatchId: data.currentMatchId || null,
+      });
+    }
 
     if (data.eventStatus && data.eventStatus !== 'NOT_STARTED') {
       setParticipantRoute('ARENA');
@@ -109,6 +139,7 @@ export const ParticipantExperience: React.FC<ParticipantExperienceProps> = () =>
   // 3. Real-Time Transition to Arena
   const handleEventStart = () => {
     setEventStatus('RUNNING');
+    updateFromServer({ status: 'RUNNING' });
     setParticipantRoute('ARENA');
     window.history.pushState(null, '', '/arena');
   };
@@ -165,8 +196,14 @@ export const ParticipantExperience: React.FC<ParticipantExperienceProps> = () =>
     <ParticipantArena
       team={authenticatedTeam}
       eventStatus={eventStatus}
+      currentMatchNumber={currentMatchNumber}
+      currentMatchId={currentMatchId}
       onLogout={handleLogout}
-      onReturnToWaiting={() => setParticipantRoute('WAITING')}
+      onReturnToWaiting={() => {
+        setParticipantRoute('WAITING');
+        setEventStatus('NOT_STARTED');
+        window.history.replaceState(null, '', '/waiting');
+      }}
     />
   );
 };

@@ -10,7 +10,7 @@
  */
 
 import { db } from '../../src/db/index.ts';
-import { antiCheatEvents, teams, sessions, adminUsers, challenges, participants, eventSettings } from '../../src/db/schema.ts';
+import { antiCheatEvents, teams, sessions, adminUsers, challenges, participants, eventSettings, competitionMatches } from '../../src/db/schema.ts';
 import { eq, desc, and, or, sql, inArray } from 'drizzle-orm';
 import { teamRealtimeService } from '../services/teamRealtimeService.ts';
 
@@ -31,7 +31,9 @@ export type AntiCheatEventType =
   | 'MULTI_SESSION_ATTEMPT'
   | 'SESSION_REJECTED'
   | 'HEARTBEAT_TIMEOUT'
-  | 'COPY_PASTE_FLAG';
+  | 'COPY_PASTE_FLAG'
+  | 'ARENA_ROUTE_BLOCKED'
+  | 'LEAVE_ATTEMPT';
 
 export type AntiCheatAction =
   | 'LOGGED'
@@ -90,7 +92,9 @@ export class AntiCheatRepository {
       params.eventType === 'TAB_HIDDEN' ||
       params.eventType === 'WINDOW_BLUR' ||
       params.eventType === 'MULTIPLE_SESSION' ||
-      params.eventType === 'MULTI_SESSION_ATTEMPT'
+      params.eventType === 'MULTI_SESSION_ATTEMPT' ||
+      params.eventType === 'ARENA_ROUTE_BLOCKED' ||
+      params.eventType === 'LEAVE_ATTEMPT'
         ? 'RECORDED_VIOLATION'
         : 'WARNING');
 
@@ -191,6 +195,36 @@ export class AntiCheatRepository {
 
     let matchNumber = params.matchNumber;
     let matchId = params.matchId || null;
+
+    if (params.matchId && !matchNumber) {
+      try {
+        const [matchRec] = await db
+          .select({ matchNumber: competitionMatches.matchNumber })
+          .from(competitionMatches)
+          .where(eq(competitionMatches.id, params.matchId))
+          .limit(1);
+        if (matchRec) {
+          matchNumber = matchRec.matchNumber;
+        }
+      } catch {
+        // Fallback to current settings if match record not found
+      }
+    }
+
+    if (matchNumber && !matchId) {
+      try {
+        const [matchRec] = await db
+          .select({ id: competitionMatches.id })
+          .from(competitionMatches)
+          .where(eq(competitionMatches.matchNumber, matchNumber))
+          .limit(1);
+        if (matchRec) {
+          matchId = matchRec.id;
+        }
+      } catch {
+        // Fallback if match record not found
+      }
+    }
 
     if (!matchNumber) {
       try {
