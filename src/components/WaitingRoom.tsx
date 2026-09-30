@@ -13,7 +13,7 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { Terminal, Users, Clock, Radio, LogOut, Shield, AlertCircle, Play } from 'lucide-react';
+import { Terminal, Users, Clock, Radio, LogOut, Shield, AlertCircle } from 'lucide-react';
 import { updateFromServer } from '../services/authoritativeTimer';
 
 interface WaitingRoomProps {
@@ -183,20 +183,6 @@ export const WaitingRoom: React.FC<WaitingRoomProps> = ({
     }
   };
 
-  // Organizer Simulator for rapid local testing / evaluation
-  const simulateOrganizerStart = async () => {
-    try {
-      await fetch('/api/competition/event/status', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'RUNNING' }),
-      });
-      onEventStart();
-    } catch (err) {
-      console.error('Failed to trigger organizer start:', err);
-    }
-  };
-
   return (
     <div id="waiting-room-root" className="w-full max-w-2xl mx-auto py-8 sm:py-14 px-4 space-y-6">
       {/* Top Banner & Title */}
@@ -301,21 +287,6 @@ export const WaitingRoom: React.FC<WaitingRoomProps> = ({
           <span className="text-[11px] text-zinc-500 font-mono">
             Releasing session frees your team slot
           </span>
-        </div>
-
-        {/* Organizer Simulation Drawer for Testing */}
-        <div className="pt-4 border-t border-zinc-800/80">
-          <div className="flex items-center justify-between text-zinc-500 font-mono text-xs">
-            <span>Organizer Simulation (AI Studio Testing)</span>
-            <button
-              type="button"
-              onClick={simulateOrganizerStart}
-              className="px-3 py-1 rounded-lg border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 text-[11px] flex items-center gap-1.5 cursor-pointer transition-colors"
-            >
-              <Play className="w-3 h-3" />
-              <span>Simulate Start (NOT_STARTED → RUNNING)</span>
-            </button>
-          </div>
         </div>
       </div>
     </div>

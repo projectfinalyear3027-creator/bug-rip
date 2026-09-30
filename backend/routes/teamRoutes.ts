@@ -37,6 +37,15 @@ teamRouter.get('/me', requireParticipantAuth, async (req: Request, res: Response
  */
 teamRouter.get('/me/challenges', requireParticipantAuth, async (req: Request, res: Response, next: NextFunction) => {
   try {
+    const eventStatus = await eventService.getEventStatus();
+    if (eventStatus.status === 'NOT_STARTED') {
+      return res.status(403).json({
+        success: false,
+        error: 'Challenges cannot be accessed before the competition has started.',
+        code: 'EVENT_NOT_STARTED',
+      });
+    }
+
     const teamId = req.team!.id;
     const progress = await eventService.getTeamAvailableChallenges(teamId);
     res.json({
@@ -54,6 +63,15 @@ teamRouter.get('/me/challenges', requireParticipantAuth, async (req: Request, re
  */
 teamRouter.get('/me/progress', requireParticipantAuth, async (req: Request, res: Response, next: NextFunction) => {
   try {
+    const eventStatus = await eventService.getEventStatus();
+    if (eventStatus.status === 'NOT_STARTED') {
+      return res.status(403).json({
+        success: false,
+        error: 'Challenges cannot be accessed before the competition has started.',
+        code: 'EVENT_NOT_STARTED',
+      });
+    }
+
     const teamId = req.team!.id;
     const progress = await eventService.getTeamAvailableChallenges(teamId);
     res.json({
@@ -68,6 +86,15 @@ teamRouter.get('/me/progress', requireParticipantAuth, async (req: Request, res:
 // Alias for /api/team/progress and /api/team/challenges
 teamRouter.get('/progress', requireParticipantAuth, async (req: Request, res: Response, next: NextFunction) => {
   try {
+    const eventStatus = await eventService.getEventStatus();
+    if (eventStatus.status === 'NOT_STARTED') {
+      return res.status(403).json({
+        success: false,
+        error: 'Challenges cannot be accessed before the competition has started.',
+        code: 'EVENT_NOT_STARTED',
+      });
+    }
+
     const teamId = req.team!.id;
     const progress = await eventService.getTeamAvailableChallenges(teamId);
     res.json({
@@ -81,6 +108,15 @@ teamRouter.get('/progress', requireParticipantAuth, async (req: Request, res: Re
 
 teamRouter.get('/challenges', requireParticipantAuth, async (req: Request, res: Response, next: NextFunction) => {
   try {
+    const eventStatus = await eventService.getEventStatus();
+    if (eventStatus.status === 'NOT_STARTED') {
+      return res.status(403).json({
+        success: false,
+        error: 'Challenges cannot be accessed before the competition has started.',
+        code: 'EVENT_NOT_STARTED',
+      });
+    }
+
     const teamId = req.team!.id;
     const progress = await eventService.getTeamAvailableChallenges(teamId);
     res.json({

@@ -59,7 +59,8 @@ export const ParticipantExperience: React.FC<ParticipantExperienceProps> = () =>
           const data = await res.json();
           if (data.authenticated && data.team) {
             setAuthenticatedTeam(data.team);
-            setEventStatus(data.eventStatus || 'NOT_STARTED');
+            const authoritativeStatus = data.eventStatus || 'NOT_STARTED';
+            setEventStatus(authoritativeStatus);
             if (data.currentMatchNumber) {
               setCurrentMatchNumber(data.currentMatchNumber);
             }
@@ -70,7 +71,7 @@ export const ParticipantExperience: React.FC<ParticipantExperienceProps> = () =>
               updateFromServer(data.authoritativeTimer);
             }
 
-            if (data.eventStatus && data.eventStatus !== 'NOT_STARTED') {
+            if (authoritativeStatus === 'RUNNING' || authoritativeStatus === 'PAUSED' || authoritativeStatus === 'ENDED') {
               setParticipantRoute('ARENA');
               window.history.replaceState(null, '', '/arena');
             } else {
@@ -96,6 +97,26 @@ export const ParticipantExperience: React.FC<ParticipantExperienceProps> = () =>
 
     restoreSession();
   }, []);
+
+  // Direct URL Navigation and Popstate Guard:
+  // If competition is NOT_STARTED, navigation to /arena is strictly blocked and rewritten to /waiting
+  useEffect(() => {
+    const handleUrlGuard = () => {
+      const path = window.location.pathname;
+      if (path === '/arena' && eventStatus === 'NOT_STARTED') {
+        setParticipantRoute('WAITING');
+        window.history.replaceState(null, '', '/waiting');
+      } else if (path === '/arena' && authenticatedTeam && eventStatus !== 'NOT_STARTED') {
+        setParticipantRoute('ARENA');
+      } else if (path === '/waiting' && authenticatedTeam) {
+        setParticipantRoute('WAITING');
+      }
+    };
+
+    handleUrlGuard();
+    window.addEventListener('popstate', handleUrlGuard);
+    return () => window.removeEventListener('popstate', handleUrlGuard);
+  }, [eventStatus, authenticatedTeam]);
 
   // 2. Handle Login Success
   const handleLoginSuccess = (data: {
@@ -127,7 +148,7 @@ export const ParticipantExperience: React.FC<ParticipantExperienceProps> = () =>
       });
     }
 
-    if (data.eventStatus && data.eventStatus !== 'NOT_STARTED') {
+    if (data.eventStatus === 'RUNNING' || data.eventStatus === 'PAUSED' || data.eventStatus === 'ENDED') {
       setParticipantRoute('ARENA');
       window.history.pushState(null, '', '/arena');
     } else {

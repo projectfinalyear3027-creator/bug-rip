@@ -264,6 +264,15 @@ export class ProgressionService {
     teamId: string,
     challengeId: string
   ): Promise<ParticipantChallengeDTO> {
+    const eventStatus = await eventService.getEventStatus();
+    if (eventStatus.status === 'NOT_STARTED') {
+      throw new AppError(
+        'Challenges cannot be viewed before the competition has started.',
+        403,
+        'EVENT_NOT_STARTED'
+      );
+    }
+
     // 1. Participant-safe database query: excludes solution_code, admin_notes, hidden tests, flag
     const chal = await challengeRepository.getParticipantChallengeById(challengeId);
     if (!chal) {

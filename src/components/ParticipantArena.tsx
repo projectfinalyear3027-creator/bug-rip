@@ -545,6 +545,13 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
   const fetchProgression = useCallback(async () => {
     try {
       const res = await arenaFetch('/api/challenges');
+      if (res.status === 403) {
+        const data = await res.json().catch(() => null);
+        if (data?.code === 'EVENT_NOT_STARTED' && onReturnToWaitingRef.current) {
+          onReturnToWaitingRef.current();
+          return;
+        }
+      }
       const contentType = res.headers.get('content-type') || '';
       if (!contentType.includes('application/json')) {
         return;
@@ -1002,6 +1009,10 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
         // Fetch recent run submissions for this challenge
         fetchSubmissions(details.id);
       } else {
+        if (res.status === 403 && data?.code === 'EVENT_NOT_STARTED' && onReturnToWaitingRef.current) {
+          onReturnToWaitingRef.current();
+          return;
+        }
         setChallengeError(data.error || 'Failed to load challenge details.');
         setChallengeDetails(null);
       }

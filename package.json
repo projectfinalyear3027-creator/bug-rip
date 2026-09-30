@@ -36,6 +36,7 @@
     "test:smoke-prod": "tsx tests/production_smoke_test.ts",
     "db:verify-clean": "tsx scripts/verify-registration-state.ts",
     "db:clean-demo": "tsx scripts/cleanup-demo-participants.ts",
+    "test:no-bypass": "PG_MEM=true SEED_TEST_FIXTURES=true tsx tests/no_participant_simulate_start_bypass.test.ts",
     "lint": "tsc --noEmit"
   },
   "dependencies": {

@@ -327,25 +327,3 @@ healthRouter.get('/competition/status', handleEventStatus);
 healthRouter.get('/event/status', handleEventStatus);
 healthRouter.get('/competition/event/status', handleEventStatus);
 
-/**
- * POST /api/competition/event/status
- * POST /api/event/status
- * Simulation/Testing endpoint to quickly trigger event state transitions.
- */
-healthRouter.post(['/competition/event/status', '/event/status'], async (req: Request, res: Response) => {
-  try {
-    const { status } = req.body;
-    if (status === 'RUNNING' || status === 'PAUSED' || status === 'ENDED' || status === 'NOT_STARTED') {
-      const result = await adminRepository.transitionEventStatus(
-        status,
-        '00000000-0000-0000-0000-000000000001',
-        status
-      );
-      return res.json({ success: true, status, event: result.event });
-    }
-    return res.status(400).json({ success: false, error: 'Invalid status provided.' });
-  } catch (err: any) {
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
-

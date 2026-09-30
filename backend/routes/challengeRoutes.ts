@@ -31,6 +31,14 @@ challengeRouter.get(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const eventStatus = await eventService.getEventStatus();
+      if (eventStatus.status === 'NOT_STARTED') {
+        return res.status(403).json({
+          success: false,
+          error: 'Challenges cannot be accessed before the competition has started.',
+          code: 'EVENT_NOT_STARTED',
+        });
+      }
+
       const participantId = req.participant?.id || req.team!.id;
       const progress = await eventService.getTeamAvailableChallenges(participantId);
       return res.json({
@@ -411,6 +419,15 @@ challengeRouter.get(
   requireParticipantAuth,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
+      const eventStatus = await eventService.getEventStatus();
+      if (eventStatus.status === 'NOT_STARTED') {
+        return res.status(403).json({
+          success: false,
+          error: 'Executions cannot be viewed before the competition has started.',
+          code: 'EVENT_NOT_STARTED',
+        });
+      }
+
       const participantId = req.participant?.id || req.team!.id;
       const teamId = req.team!.id;
       const challengeId = req.params.id;
@@ -504,6 +521,15 @@ challengeRouter.get(
   requireParticipantAuth,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
+      const eventStatus = await eventService.getEventStatus();
+      if (eventStatus.status === 'NOT_STARTED') {
+        return res.status(403).json({
+          success: false,
+          error: 'Submissions cannot be viewed before the competition has started.',
+          code: 'EVENT_NOT_STARTED',
+        });
+      }
+
       const participantId = req.participant?.id || req.team!.id;
       const challengeId = req.params.id;
 
