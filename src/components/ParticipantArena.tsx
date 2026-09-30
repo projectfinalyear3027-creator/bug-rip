@@ -49,6 +49,8 @@ import {
   ShieldCheck,
   Maximize2,
   Minimize2,
+  Code2,
+  BookOpen,
 } from 'lucide-react';
 import {
   useAuthoritativeTimer,
@@ -198,10 +200,32 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
   const activeMatchNumber = timer.currentMatchNumber;
   const activeMatchId = timer.currentMatchId;
   const [loggingOut, setLoggingOut] = useState(false);
-  const activeMatchNumberRef = useRef(activeMatchNumber);
-  activeMatchNumberRef.current = activeMatchNumber;
-  const activeMatchIdRef = useRef(activeMatchId);
-  activeMatchIdRef.current = activeMatchId;
+
+  // Authoritative State Machine & Status Invariants
+  const isPaused = currentStatus === 'PAUSED';
+  const isEnded = currentStatus === 'ENDED';
+
+  // Authoritative match refs for stale request invalidation & draft isolation
+  const latestMatchIdRef = useRef<string | null>(activeMatchId);
+  latestMatchIdRef.current = activeMatchId;
+  const latestMatchNumberRef = useRef<number>(activeMatchNumber);
+  latestMatchNumberRef.current = activeMatchNumber;
+  const requestGenerationRef = useRef<number>(0);
+  const loadChallengeAbortControllerRef = useRef<AbortController | null>(null);
+
+  const getAuthoritativeMatchScope = useCallback(
+    (mId: string | null = activeMatchId, mNum: number = activeMatchNumber) => {
+      return mId && mId.trim() !== '' ? mId : `m${mNum}`;
+    },
+    [activeMatchId, activeMatchNumber]
+  );
+
+  const lastHandledMatchScopeRef = useRef<string>(
+    getAuthoritativeMatchScope(activeMatchId, activeMatchNumber)
+  );
+
+  const activeMatchNumberRef = latestMatchNumberRef;
+  const activeMatchIdRef = latestMatchIdRef;
 
   // Team Progression & Member Counts
   const [connectedCount, setConnectedCount] = useState<number>(team.connectedMemberCount || 1);
@@ -312,6 +336,24 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
 
   // Strict Competition Gate: In RUNNING match, solving requires active fullscreen
   const isFullscreenExited = currentStatus === 'RUNNING' && !isFullscreen;
+  const solvingLocked = currentStatus !== 'RUNNING' || !isFullscreen;
+
+  // Effect watching solvingLocked and explicitly updating Monaco editor
+  useEffect(() => {
+    if (editorRef.current) {
+      try {
+        editorRef.current.updateOptions({
+          readOnly: solvingLocked,
+        });
+      } catch (err) {
+        console.warn('Monaco updateOptions error on solvingLocked change:', err);
+      }
+    }
+  }, [solvingLocked]);
+
+  // Mobile Segmented View State (< lg)
+  type MobileTab = 'challenges' | 'problem' | 'editor' | 'output';
+  const [mobileTab, setMobileTab] = useState<MobileTab>('challenges');
 
   // Layout updates on fullscreen and active challenge changes
   useEffect(() => {
@@ -364,26 +406,55 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
   const toggleFullscreen = useCallback(async () => {
     try {
       if (typeof document === 'undefined') return;
-      if (!document.fullscreenElement) {
-        await document.documentElement.requestFullscreen();
+      const isCurrentlyFs = Boolean(
+        document.fullscreenElement || (document as any).webkitFullscreenElement
+      );
+      if (!isCurrentlyFs) {
+        if (document.documentElement.requestFullscreen) {
+          await document.documentElement.requestFullscreen();
+        } else if ((document.documentElement as any).webkitRequestFullscreen) {
+          await (document.documentElement as any).webkitRequestFullscreen();
+        }
         setIsFullscreen(true);
         setAntiCheatNotice(null);
+        if (currentStatus === 'RUNNING' && editorRef.current) {
+          editorRef.current.updateOptions({ readOnly: false });
+        }
       } else {
-        await document.exitFullscreen();
+        if (document.exitFullscreen) {
+          await document.exitFullscreen();
+        } else if ((document as any).webkitExitFullscreen) {
+          await (document as any).webkitExitFullscreen();
+        }
         setIsFullscreen(false);
+        if (editorRef.current) {
+          editorRef.current.updateOptions({ readOnly: true });
+        }
       }
     } catch (err) {
       console.warn('Fullscreen request dismissed or not permitted:', err);
     }
-  }, []);
+  }, [currentStatus]);
 
   // Anti-Cheat Event Listeners (Fullscreen, Tab Switch, Window Blur)
   useEffect(() => {
     if (typeof document === 'undefined' || typeof window === 'undefined') return;
 
     const handleFullscreenChange = () => {
-      const active = Boolean(document.fullscreenElement);
+      const active = Boolean(
+        document.fullscreenElement || (document as any).webkitFullscreenElement
+      );
       setIsFullscreen(active);
+      const isNowLocked = currentStatus !== 'RUNNING' || !active;
+      if (editorRef.current) {
+        try {
+          editorRef.current.updateOptions({
+            readOnly: isNowLocked,
+          });
+        } catch (err) {
+          console.warn('Monaco updateOptions error on fullscreen change:', err);
+        }
+      }
       if (currentStatus === 'RUNNING') {
         if (!active) {
           sendIntegrityEvent('FULLSCREEN_EXIT');
@@ -473,6 +544,8 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
     };
 
     document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+    document.addEventListener('mozfullscreenchange', handleFullscreenChange);
     document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('blur', handleWindowBlur);
     window.addEventListener('focus', handleWindowFocus);
@@ -481,6 +554,8 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
     return () => {
       if (resizeTimer) clearTimeout(resizeTimer);
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
+      document.removeEventListener('mozfullscreenchange', handleFullscreenChange);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('blur', handleWindowBlur);
       window.removeEventListener('focus', handleWindowFocus);
@@ -762,6 +837,33 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
         const handleMatchReset = (data: any) => {
           const newMatchNumber = data?.matchNumber;
           const newMatchId = data?.matchId || null;
+
+          // Invalidate prior request and bump generation immediately
+          requestGenerationRef.current += 1;
+          if (loadChallengeAbortControllerRef.current) {
+            try {
+              loadChallengeAbortControllerRef.current.abort();
+            } catch {}
+            loadChallengeAbortControllerRef.current = null;
+          }
+
+          latestMatchIdRef.current = newMatchId;
+          if (typeof newMatchNumber === 'number') {
+            latestMatchNumberRef.current = newMatchNumber;
+          }
+          lastHandledMatchScopeRef.current = getAuthoritativeMatchScope(newMatchId, newMatchNumber);
+
+          // Clear stale editor, draft, and challenge state immediately
+          setEditorSource('');
+          setHasDraft(false);
+          setChallengeDetails(null);
+          setExecutionResult(null);
+          setFlagInput('');
+          setFlagSubmitError(null);
+          setFlagSubmitSuccess(null);
+          setNewlyUnlockedTierAlert(null);
+          setRunError(null);
+
           updateFromServer({
             currentMatchNumber: newMatchNumber,
             currentMatchId: newMatchId,
@@ -770,10 +872,7 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
             totalSeconds: (data?.durationMinutes || 60) * 60,
             remainingSeconds: (data?.durationMinutes || 60) * 60,
           });
-          // New match started: reload active challenge to discard previous match's draft
-          if (activeChallengeIdRef.current) {
-            loadChallenge(activeChallengeIdRef.current);
-          }
+
           if (onReturnToWaitingRef.current) {
             onReturnToWaitingRef.current();
           }
@@ -892,71 +991,90 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
     } catch {}
   }, [team.id]);
 
-  // Synchronize when parent passes new match info
-  useEffect(() => {
-    if (
-      initialMatchNumber &&
-      initialMatchNumber !== activeMatchNumberRef.current
-    ) {
-      updateFromServer({
-        currentMatchNumber: initialMatchNumber,
-        currentMatchId: initialMatchId || null,
-      });
-      if (challengeDetails) {
-        const draftKey = getDraftStorageKey(
-          challengeDetails.id,
-          initialMatchId,
-          initialMatchNumber
-        );
-        const newMatchDraft =
-          typeof localStorage !== 'undefined'
-            ? localStorage.getItem(draftKey)
-            : null;
-        if (newMatchDraft !== null && newMatchDraft.trim() !== '') {
-          setEditorSource(newMatchDraft);
-          setHasDraft(true);
-        } else {
-          setEditorSource(challengeDetails.starterCode || '');
-          setHasDraft(false);
-        }
-      }
-    } else if (initialMatchId && initialMatchId !== activeMatchIdRef.current) {
-      updateFromServer({
-        currentMatchId: initialMatchId,
-      });
-    }
-  }, [initialMatchNumber, initialMatchId]);
-
-  const getAuthoritativeMatchScope = (
-    mId: string | null = activeMatchId,
-    mNum: number = activeMatchNumber
-  ) => {
-    return mId && mId.trim() !== '' ? mId : `m${mNum}`;
-  };
-
   const getDraftStorageKey = (
     challengeId: string,
-    mId: string | null = activeMatchId,
-    mNum: number = activeMatchNumber
+    mId: string | null = latestMatchIdRef.current,
+    mNum: number = latestMatchNumberRef.current
   ) => {
     const matchScope = getAuthoritativeMatchScope(mId, mNum);
     return `bugrip_draft_${team.id}_${matchScope}_${challengeId}`;
   };
 
   const getActiveChallengeStorageKey = (
-    mId: string | null = activeMatchId,
-    mNum: number = activeMatchNumber
+    mId: string | null = latestMatchIdRef.current,
+    mNum: number = latestMatchNumberRef.current
   ) => {
     const matchScope = getAuthoritativeMatchScope(mId, mNum);
     return `bugrip_active_challenge_${team.id}_${matchScope}`;
   };
 
+  // Synchronize when active match changes - Invalidate stale requests and isolate drafts
+  useEffect(() => {
+    const currentScope = getAuthoritativeMatchScope(activeMatchId, activeMatchNumber);
+    if (lastHandledMatchScopeRef.current !== currentScope) {
+      lastHandledMatchScopeRef.current = currentScope;
+      latestMatchIdRef.current = activeMatchId;
+      latestMatchNumberRef.current = activeMatchNumber;
+
+      // 1. Invalidate any in-flight request
+      requestGenerationRef.current += 1;
+      if (loadChallengeAbortControllerRef.current) {
+        try {
+          loadChallengeAbortControllerRef.current.abort();
+        } catch {}
+        loadChallengeAbortControllerRef.current = null;
+      }
+
+      // 2. Clear stale editor, draft, and challenge state immediately
+      setEditorSource('');
+      setHasDraft(false);
+      setChallengeDetails(null);
+      setExecutionResult(null);
+      setFlagInput('');
+      setFlagSubmitError(null);
+      setFlagSubmitSuccess(null);
+      setNewlyUnlockedTierAlert(null);
+      setRunError(null);
+
+      // 3. Reload current challenge strictly scoped to the new match
+      if (activeChallengeId) {
+        loadChallenge(activeChallengeId);
+      }
+    }
+  }, [activeMatchId, activeMatchNumber, activeChallengeId, getAuthoritativeMatchScope]);
+
+  // Synchronize when parent passes new match info
+  useEffect(() => {
+    if (
+      initialMatchNumber &&
+      initialMatchNumber !== latestMatchNumberRef.current
+    ) {
+      updateFromServer({
+        currentMatchNumber: initialMatchNumber,
+        currentMatchId: initialMatchId || null,
+      });
+    } else if (initialMatchId && initialMatchId !== latestMatchIdRef.current) {
+      updateFromServer({
+        currentMatchId: initialMatchId,
+      });
+    }
+  }, [initialMatchNumber, initialMatchId]);
+
   const loadChallenge = async (id: string) => {
+    requestGenerationRef.current += 1;
+    const generation = requestGenerationRef.current;
+
+    if (loadChallengeAbortControllerRef.current) {
+      loadChallengeAbortControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    loadChallengeAbortControllerRef.current = controller;
+
     setActiveChallengeId(id);
     if (typeof localStorage !== 'undefined') {
       try {
         localStorage.setItem(
-          getActiveChallengeStorageKey(activeMatchId, activeMatchNumber),
+          getActiveChallengeStorageKey(latestMatchIdRef.current, latestMatchNumberRef.current),
           id
         );
       } catch {}
@@ -972,27 +1090,46 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
     setCopiedFlag(false);
 
     try {
-      const res = await arenaFetch(`/api/challenges/${id}`);
+      const res = await arenaFetch(`/api/challenges/${id}`, {
+        signal: controller.signal,
+      });
+      if (generation !== requestGenerationRef.current) {
+        return;
+      }
+
       const data = await res.json();
+      if (generation !== requestGenerationRef.current) {
+        return;
+      }
 
       if (res.ok && data.success && data.data) {
+        if (generation !== requestGenerationRef.current) {
+          return;
+        }
+
         const details: ChallengeDetails = data.data;
         setChallengeDetails(details);
         previousCompletionRef.current = details.status === 'COMPLETED';
 
-        let currentMId = activeMatchId;
-        let currentMNum = activeMatchNumber;
-        if (data.matchId && data.matchId !== activeMatchId) {
+        let currentMId = latestMatchIdRef.current;
+        let currentMNum = latestMatchNumberRef.current;
+        if (data.matchId && data.matchId !== latestMatchIdRef.current) {
           currentMId = data.matchId;
+          latestMatchIdRef.current = data.matchId;
           updateFromServer({ currentMatchId: data.matchId });
         }
-        if (data.matchNumber && data.matchNumber !== activeMatchNumber) {
+        if (data.matchNumber && data.matchNumber !== latestMatchNumberRef.current) {
           currentMNum = data.matchNumber;
+          latestMatchNumberRef.current = data.matchNumber;
           updateFromServer({ currentMatchNumber: data.matchNumber });
         }
 
-        // Draft restoration logic: strictly scoped to current match + participant + challenge
-        const draftKey = getDraftStorageKey(details.id, currentMId, currentMNum);
+        // Draft restoration logic: strictly scoped to authoritative match scope + participant + challenge
+        const currentMatchScope = getAuthoritativeMatchScope(
+          latestMatchIdRef.current,
+          latestMatchNumberRef.current
+        );
+        const draftKey = `bugrip_draft_${team.id}_${currentMatchScope}_${details.id}`;
         const savedDraft =
           typeof localStorage !== 'undefined'
             ? localStorage.getItem(draftKey)
@@ -1017,10 +1154,17 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
         setChallengeDetails(null);
       }
     } catch (err: any) {
-      setChallengeError(err.message || 'Network error while loading challenge.');
-      setChallengeDetails(null);
+      if (err.name === 'AbortError') {
+        return;
+      }
+      if (generation === requestGenerationRef.current) {
+        setChallengeError(err.message || 'Network error while loading challenge.');
+        setChallengeDetails(null);
+      }
     } finally {
-      setLoadingChallenge(false);
+      if (generation === requestGenerationRef.current) {
+        setLoadingChallenge(false);
+      }
     }
   };
 
@@ -1099,13 +1243,30 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
 
   // Handle Monaco editor changes & draft caching scoped to current match
   const handleEditorChange = (value: string | undefined) => {
+    const isActuallyFullscreen = Boolean(
+      typeof document !== 'undefined' &&
+        (document.fullscreenElement || (document as any).webkitFullscreenElement)
+    );
+    const isLocked = currentStatus !== 'RUNNING' || !isActuallyFullscreen || solvingLocked;
+    if (isLocked) {
+      // Source must NOT change while locked - revert if changed
+      if (editorRef.current) {
+        try {
+          const model = editorRef.current.getModel?.();
+          if (model && editorSource !== undefined && model.getValue() !== editorSource) {
+            model.setValue(editorSource);
+          }
+        } catch {}
+      }
+      return;
+    }
     const updated = value ?? '';
     setEditorSource(updated);
     if (activeChallengeId) {
       const draftKey = getDraftStorageKey(
         activeChallengeId,
-        activeMatchId,
-        activeMatchNumber
+        latestMatchIdRef.current,
+        latestMatchNumberRef.current
       );
       if (typeof localStorage !== 'undefined') {
         localStorage.setItem(draftKey, updated);
@@ -1116,7 +1277,7 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
 
   // Reset editor to authoritative starter code
   const handleResetStarterCode = () => {
-    if (!challengeDetails || isPaused || isEnded || isFullscreenExited) return;
+    if (!challengeDetails || solvingLocked) return;
     if (
       window.confirm(
         'Are you sure you want to reset to the original starter code? Any unsaved local edits will be cleared.'
@@ -1128,8 +1289,8 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
           localStorage.removeItem(
             getDraftStorageKey(
               activeChallengeId,
-              activeMatchId,
-              activeMatchNumber
+              latestMatchIdRef.current,
+              latestMatchNumberRef.current
             )
           );
         }
@@ -1143,6 +1304,12 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
     setEditorInstance(editor);
     editorRef.current = editor;
     monacoRef.current = monaco;
+
+    try {
+      editor.updateOptions({
+        readOnly: solvingLocked,
+      });
+    } catch {}
 
     const remeasure = () => {
       try {
@@ -1182,12 +1349,12 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
   // ===========================================================================
   const handleRunCode = async () => {
     if (!activeChallengeId || !challengeDetails) return;
-    if (currentStatus !== 'RUNNING') {
-      setRunError(`Cannot run code while competition is ${currentStatus}.`);
-      return;
-    }
-    if (isFullscreenExited) {
-      setRunError('Active arena fullscreen is required to execute code.');
+    if (solvingLocked) {
+      setRunError(
+        currentStatus !== 'RUNNING'
+          ? `Cannot run code while competition is ${currentStatus}.`
+          : 'Active arena fullscreen is required to execute code.'
+      );
       return;
     }
     if (challengeDetails.status === 'LOCKED') {
@@ -1209,6 +1376,11 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
 
     setSubmittingRun(true);
     setRunError(null);
+
+    // Switch mobile tab to output console so participant sees execution
+    if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+      setMobileTab('output');
+    }
 
     // Initial queued state feedback
     setExecutionResult({
@@ -1372,13 +1544,12 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
     const flagToSubmit = (overrideFlag || flagInput || '').trim();
     if (!activeChallengeId || !flagToSubmit) return;
 
-    if (currentStatus !== 'RUNNING') {
-      setFlagSubmitError(`Cannot submit flag while competition is ${currentStatus}.`);
-      return;
-    }
-
-    if (isFullscreenExited) {
-      setFlagSubmitError('Active arena fullscreen is required to submit flags.');
+    if (solvingLocked) {
+      setFlagSubmitError(
+        currentStatus !== 'RUNNING'
+          ? `Cannot submit flag while competition is ${currentStatus}.`
+          : 'Active arena fullscreen is required to submit flags.'
+      );
       return;
     }
 
@@ -1462,9 +1633,6 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
       onLogout();
     }
   };
-
-  const isPaused = currentStatus === 'PAUSED';
-  const isEnded = currentStatus === 'ENDED';
 
   if (currentStatus === 'NOT_STARTED') {
     return (
@@ -1681,7 +1849,7 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
             </div>
             <div>
               <h2 className="text-lg font-black tracking-wide text-zinc-100 uppercase">
-                Fullscreen Mode Required
+                FULLSCREEN REQUIRED TO CONTINUE
               </h2>
               <p className="text-xs text-zinc-400 mt-2 leading-relaxed">
                 A participant in a RUNNING match may solve, execute, and submit only while in arena fullscreen mode. Solving controls and submissions are locked until fullscreen is restored.
@@ -1691,7 +1859,7 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
               id="arena-restore-fullscreen-btn"
               data-testid="arena-restore-fullscreen-btn"
               onClick={toggleFullscreen}
-              className="w-full py-3 px-4 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-black text-sm tracking-wide transition-all shadow-lg active:scale-98 cursor-pointer flex items-center justify-center gap-2"
+              className="w-full py-3 px-4 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-black text-sm tracking-wide transition-all shadow-lg active:scale-98 cursor-pointer flex items-center justify-center gap-2 min-h-[44px]"
             >
               <Maximize2 className="w-4 h-4" />
               <span>Enter Fullscreen to Resume Solving</span>
@@ -1740,6 +1908,69 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
         </div>
       )}
 
+      {/* ========================================================================= */}
+      {/* MOBILE SEGMENTED VIEW SWITCHER (< lg ONLY)                                */}
+      {/* ========================================================================= */}
+      <div className="lg:hidden sticky top-2 z-40 bg-zinc-950/95 backdrop-blur-md border border-zinc-800 rounded-xl p-1.5 shadow-xl flex items-center gap-1">
+        <button
+          type="button"
+          id="mobile-tab-challenges"
+          onClick={() => setMobileTab('challenges')}
+          className={`flex-1 py-2 px-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 min-h-[44px] cursor-pointer ${
+            mobileTab === 'challenges'
+              ? 'bg-blue-600 text-white shadow-md'
+              : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900'
+          }`}
+        >
+          <Layers className="w-3.5 h-3.5 shrink-0" />
+          <span className="truncate">Challenges</span>
+        </button>
+
+        <button
+          type="button"
+          id="mobile-tab-problem"
+          onClick={() => setMobileTab('problem')}
+          className={`flex-1 py-2 px-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 min-h-[44px] cursor-pointer ${
+            mobileTab === 'problem'
+              ? 'bg-blue-600 text-white shadow-md'
+              : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900'
+          }`}
+        >
+          <BookOpen className="w-3.5 h-3.5 shrink-0" />
+          <span className="truncate">Problem</span>
+        </button>
+
+        <button
+          type="button"
+          id="mobile-tab-editor"
+          onClick={() => setMobileTab('editor')}
+          className={`flex-1 py-2 px-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 min-h-[44px] cursor-pointer ${
+            mobileTab === 'editor'
+              ? 'bg-blue-600 text-white shadow-md'
+              : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900'
+          }`}
+        >
+          <FileCode className="w-3.5 h-3.5 shrink-0" />
+          <span className="truncate">Code</span>
+        </button>
+
+        <button
+          type="button"
+          id="mobile-tab-output"
+          onClick={() => setMobileTab('output')}
+          className={`flex-1 py-2 px-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 min-h-[44px] cursor-pointer relative ${
+            mobileTab === 'output'
+              ? 'bg-blue-600 text-white shadow-md'
+              : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900'
+          }`}
+        >
+          <Terminal className="w-3.5 h-3.5 shrink-0" />
+          <span className="truncate">Output</span>
+          {executionResult?.revealedFlag && (
+            <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping absolute top-1.5 right-1.5" />
+          )}
+        </button>
+      </div>
 
       {/* ========================================================================= */}
       {/* 4. MAIN ARENA LAYOUT (Sidebar + Editor / Workspace)                      */}
@@ -1748,7 +1979,7 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
         {/* ======================================================================= */}
         {/* LEFT COLUMN: DIFFICULTIES & CHALLENGES NAVIGATION (lg:col-span-3)      */}
         {/* ======================================================================= */}
-        <div id="arena-navigation-sidebar" className="lg:col-span-3 space-y-3">
+        <div id="arena-navigation-sidebar" className={`lg:col-span-3 space-y-3 ${mobileTab === 'challenges' ? 'block' : 'hidden lg:block'}`}>
           {/* Difficulty Tiers Selector */}
           <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-3 space-y-2">
             <div className="text-[10px] uppercase text-zinc-500 font-bold tracking-wider px-1 flex items-center justify-between">
@@ -1848,7 +2079,12 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
                     <button
                       key={chal.id}
                       id={`challenge-item-${chal.id}`}
-                      onClick={() => loadChallenge(chal.id)}
+                      onClick={() => {
+                        loadChallenge(chal.id);
+                        if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+                          setMobileTab('problem');
+                        }
+                      }}
                       disabled={isLocked}
                       className={`w-full p-2.5 rounded-lg border text-left transition-all cursor-pointer ${
                         isSelected
@@ -1907,7 +2143,7 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
         {/* ======================================================================= */}
         {/* MAIN WORKSPACE: CHALLENGE DETAILS, MONACO EDITOR, RUN, OUTPUT (col-span-9) */}
         {/* ======================================================================= */}
-        <div id="arena-main-workspace" className="lg:col-span-9 space-y-4">
+        <div id="arena-main-workspace" className={`lg:col-span-9 space-y-4 ${mobileTab !== 'challenges' ? 'block' : 'hidden lg:block'}`}>
           {loadingChallenge ? (
             <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-16 text-center text-zinc-500 flex flex-col items-center justify-center gap-3">
               <Loader2 className="w-8 h-8 animate-spin text-blue-400" />
@@ -1925,263 +2161,350 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
             </div>
           ) : activeChallengeId && challengeDetails ? (
             <div className="space-y-4">
-              {/* Challenge Header & Constraints Bar */}
-              <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 shadow-xl space-y-3">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-zinc-800/80">
-                  <div>
+              {/* SECTION A: PROBLEM DETAILS (<lg: mobileTab === 'problem') */}
+              <div className={`space-y-4 ${mobileTab === 'problem' ? 'block' : 'hidden lg:block'}`}>
+                {/* Challenge Header & Constraints Bar */}
+                <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 shadow-xl space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-zinc-800/80">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="px-2 py-0.5 rounded bg-blue-500/10 border border-blue-500/30 text-blue-400 text-xs font-bold font-mono">
+                          ROUND: {(challengeDetails?.roundName || '').toUpperCase()}
+                        </span>
+                        <span className="px-2 py-0.5 rounded bg-zinc-900 border border-zinc-800 text-zinc-400 text-xs font-mono">
+                          ID: {challengeDetails.id}
+                        </span>
+                        {challengeDetails.status === 'COMPLETED' && (
+                          <span className="px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-bold flex items-center gap-1 font-mono">
+                            <CheckCircle2 className="w-3 h-3" />
+                            <span>SOLVED</span>
+                          </span>
+                        )}
+                      </div>
+                      <h2 id="arena-challenge-title" className="text-xl sm:text-2xl font-black text-white mt-1">
+                        {challengeDetails.title}
+                      </h2>
+                    </div>
+
+                    <div className="text-right shrink-0">
+                      <div className="text-[10px] text-zinc-500 font-bold uppercase">REWARD</div>
+                      <div className="text-2xl font-black text-amber-400 font-mono">
+                        +{challengeDetails.score} PTS
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Problem Description Statement */}
+                  <div className="space-y-1">
+                    <div className="text-[10px] uppercase text-zinc-500 font-bold tracking-wider">
+                      PROBLEM STATEMENT
+                    </div>
+                    <div
+                      id="arena-problem-description"
+                      className="p-3.5 rounded-lg bg-zinc-900/70 border border-zinc-800 text-xs text-zinc-200 leading-relaxed font-sans whitespace-pre-wrap"
+                    >
+                      {challengeDetails.description}
+                    </div>
+                  </div>
+
+                  {/* Public Constraints Pills */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                    <div className="p-2 rounded bg-zinc-900/60 border border-zinc-850">
+                      <span className="text-[9px] text-zinc-500 uppercase font-bold block">Validation</span>
+                      <span className="font-mono text-zinc-300 font-bold">{challengeDetails.validationType}</span>
+                    </div>
+                    <div className="p-2 rounded bg-zinc-900/60 border border-zinc-850">
+                      <span className="text-[9px] text-zinc-500 uppercase font-bold block">Time Limit</span>
+                      <span className="font-mono text-zinc-300 font-bold">{challengeDetails.timeLimitMs} ms</span>
+                    </div>
+                    <div className="p-2 rounded bg-zinc-900/60 border border-zinc-850">
+                      <span className="text-[9px] text-zinc-500 uppercase font-bold block">Memory Limit</span>
+                      <span className="font-mono text-zinc-300 font-bold">{challengeDetails.memoryLimitMb} MB</span>
+                    </div>
+                    <div className="p-2 rounded bg-zinc-900/60 border border-zinc-850">
+                      <span className="text-[9px] text-zinc-500 uppercase font-bold block">Attempts</span>
+                      <span className="font-mono text-zinc-300 font-bold">{challengeDetails.attemptCount} (unlimited)</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Public Test Cases Preview */}
+                {challengeDetails.publicTestCases && challengeDetails.publicTestCases.length > 0 && (
+                  <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-3.5 space-y-2">
+                    <div className="text-[10px] uppercase text-zinc-500 font-bold tracking-wider flex items-center justify-between">
+                      <span>PUBLIC TEST CASES (EXEMPLARS)</span>
+                      <span className="text-zinc-500 font-normal">Hidden test cases evaluated on server</span>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                      {challengeDetails.publicTestCases.map((tc, i) => (
+                        <div key={tc.id || `tc-${tc.displayOrder || i}`} className="p-2.5 rounded-lg bg-zinc-900/80 border border-zinc-850 text-xs space-y-1.5 flex flex-col justify-between">
+                          <div className="space-y-1">
+                            <div className="text-[10px] font-bold text-zinc-400 uppercase flex items-center justify-between">
+                              <span>Test Case #{tc.displayOrder ?? i + 1}</span>
+                            </div>
+                            <div>
+                              <span className="text-[9px] text-zinc-500 uppercase font-bold block">Input:</span>
+                              <pre className="font-mono text-zinc-300 bg-zinc-950 p-1.5 rounded border border-zinc-850/60 text-[11px] overflow-x-auto whitespace-pre-wrap break-all">
+                                {tc.inputData}
+                              </pre>
+                            </div>
+                            <div>
+                              <span className="text-[9px] text-zinc-500 uppercase font-bold block">Expected Output:</span>
+                              <pre className="font-mono text-emerald-400 bg-zinc-950 p-1.5 rounded border border-zinc-850/60 text-[11px] overflow-x-auto whitespace-pre-wrap break-all">
+                                {tc.expectedOutput}
+                              </pre>
+                            </div>
+                          </div>
+                          {tc.explanation && (
+                            <div className="pt-1.5 border-t border-zinc-850/80">
+                              <span className="text-[9px] text-zinc-500 uppercase font-bold block">Explanation:</span>
+                              <div className="text-[11px] text-zinc-400 italic leading-snug">
+                                {tc.explanation}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Mobile Navigation Action */}
+                <div className="lg:hidden flex items-center justify-between gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setMobileTab('challenges')}
+                    className="py-2.5 px-4 rounded-xl bg-zinc-900 hover:bg-zinc-850 text-zinc-300 text-xs font-bold border border-zinc-800 transition-colors min-h-[44px] cursor-pointer"
+                  >
+                    ← All Challenges
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMobileTab('editor')}
+                    className="py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold shadow-lg shadow-blue-600/20 transition-colors min-h-[44px] cursor-pointer"
+                  >
+                    Open Code Editor →
+                  </button>
+                </div>
+              </div>
+
+              {/* ================================================================= */}
+              {/* SECTION B: MONACO JAVA EDITOR (<lg: mobileTab === 'editor')        */}
+              {/* ================================================================= */}
+              <div className={`space-y-4 ${mobileTab === 'editor' ? 'block' : 'hidden lg:block'}`}>
+                <div
+                  id="arena-monaco-container"
+                  className="bg-zinc-950 border border-zinc-800 rounded-xl overflow-hidden shadow-2xl space-y-0"
+                >
+                  {/* Editor Header Bar */}
+                  <div className="bg-zinc-900/90 px-4 py-2 border-b border-zinc-800 flex items-center justify-between text-xs">
                     <div className="flex items-center gap-2">
-                      <span className="px-2 py-0.5 rounded bg-blue-500/10 border border-blue-500/30 text-blue-400 text-xs font-bold font-mono">
-                        ROUND: {(challengeDetails?.roundName || '').toUpperCase()}
+                      <FileCode className="w-4 h-4 text-amber-400" />
+                      <span className="font-bold text-zinc-100 font-mono">Main.java</span>
+                      <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-amber-950/80 text-amber-300 border border-amber-700/60">
+                        Buggy Code (Debug Required)
                       </span>
-                      <span className="px-2 py-0.5 rounded bg-zinc-900 border border-zinc-800 text-zinc-400 text-xs font-mono">
-                        ID: {challengeDetails.id}
-                      </span>
-                      {challengeDetails.status === 'COMPLETED' && (
-                        <span className="px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-bold flex items-center gap-1 font-mono">
-                          <CheckCircle2 className="w-3 h-3" />
-                          <span>SOLVED</span>
+                      <span className="text-[10px] text-zinc-500 font-normal hidden sm:inline">• OpenJDK 21</span>
+                      {hasDraft && (
+                        <span className="text-[10px] px-2 py-0.5 rounded bg-zinc-800 text-cyan-300 border border-zinc-700 flex items-center gap-1">
+                          <Save className="w-3 h-3" />
+                          <span>Draft Saved Locally</span>
                         </span>
                       )}
                     </div>
-                    <h2 id="arena-challenge-title" className="text-xl sm:text-2xl font-black text-white mt-1">
-                      {challengeDetails.title}
-                    </h2>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        id="arena-reset-code-btn"
+                        onClick={handleResetStarterCode}
+                        disabled={solvingLocked || !challengeDetails}
+                        className={`px-2.5 py-1 rounded text-[11px] font-bold border flex items-center gap-1.5 transition-colors ${
+                          solvingLocked || !challengeDetails
+                            ? 'bg-zinc-900 text-zinc-600 border-zinc-800 cursor-not-allowed opacity-50'
+                            : 'bg-zinc-800 hover:bg-zinc-750 text-zinc-300 hover:text-white border-zinc-700 cursor-pointer'
+                        }`}
+                        title={
+                          solvingLocked
+                            ? 'Reset disabled while fullscreen or competition is inactive'
+                            : 'Reset editor back to initial buggy Java code'
+                        }
+                      >
+                        <RotateCcw className="w-3 h-3" />
+                        <span>Reset Buggy Code</span>
+                      </button>
+                    </div>
                   </div>
 
-                  <div className="text-right shrink-0">
-                    <div className="text-[10px] text-zinc-500 font-bold uppercase">REWARD</div>
-                    <div className="text-2xl font-black text-amber-400 font-mono">
-                      +{challengeDetails.score} PTS
+                  {/* Monaco Editor Canvas */}
+                  <div
+                    ref={editorContainerRef}
+                    id="monaco-canvas-wrapper"
+                    className="relative h-[380px] sm:h-[460px] w-full bg-[#1e1e1e] overflow-hidden"
+                  >
+                    {/* Blocking Overlay when Fullscreen is missing in RUNNING match */}
+                    {isFullscreenExited && (
+                      <div
+                        id="monaco-fullscreen-locked-overlay"
+                        data-testid="monaco-fullscreen-locked-overlay"
+                        className="absolute inset-0 z-30 bg-black/90 backdrop-blur-sm flex flex-col items-center justify-center p-6 text-center select-none cursor-pointer"
+                        style={{ pointerEvents: 'auto' }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          e.preventDefault();
+                          toggleFullscreen();
+                        }}
+                      >
+                        <div className="max-w-xs space-y-3 pointer-events-auto">
+                          <div className="w-12 h-12 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center mx-auto text-amber-400">
+                            <Maximize2 className="w-6 h-6 animate-pulse" />
+                          </div>
+                          <div className="text-amber-400 font-black text-sm tracking-wider uppercase">
+                            FULLSCREEN REQUIRED TO CONTINUE
+                          </div>
+                          <p className="text-[11px] text-zinc-300 leading-snug">
+                            Monaco code editor is locked. Anti-cheat rules require active fullscreen mode to inspect and edit code.
+                          </p>
+                          <button
+                            type="button"
+                            id="arena-editor-restore-fullscreen-btn"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              e.preventDefault();
+                              toggleFullscreen();
+                            }}
+                            className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-black text-xs uppercase tracking-wide cursor-pointer transition-all shadow-lg shadow-amber-500/20 active:scale-95 flex items-center justify-center gap-1.5 mx-auto min-h-[44px]"
+                          >
+                            <Maximize2 className="w-4 h-4" />
+                            <span>Return to Fullscreen</span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    <Editor
+                      height="100%"
+                      defaultLanguage="java"
+                      language="java"
+                      theme="vs-dark"
+                      value={editorSource}
+                      onChange={handleEditorChange}
+                      onMount={handleEditorDidMount}
+                      options={{
+                        minimap: { enabled: false },
+                        fontSize: 14,
+                        lineHeight: 22,
+                        letterSpacing: 0,
+                        fontLigatures: false,
+                        fontFamily:
+                          "'JetBrains Mono', Menlo, Monaco, Consolas, 'Courier New', monospace",
+                        lineNumbers: 'on',
+                        automaticLayout: true,
+                        scrollBeyondLastLine: false,
+                        tabSize: 4,
+                        renderWhitespace: 'selection',
+                        bracketPairColorization: { enabled: true },
+                        folding: true,
+                        wordWrap: 'on',
+                        cursorBlinking: 'blink',
+                        cursorStyle: 'line',
+                        cursorWidth: 2,
+                        readOnly: solvingLocked,
+                      }}
+                    />
+                  </div>
+
+                  {/* Editor Action & Run Footer */}
+                  <div className="bg-zinc-900/90 px-4 py-3 border-t border-zinc-800 flex flex-col sm:flex-row items-center justify-between gap-3">
+                    <div className="flex items-center gap-3 text-xs text-zinc-400">
+                      <span className="font-mono">
+                        {new TextEncoder().encode(editorSource).length} /{' '}
+                        {challengeDetails.maxSourceBytes || 65536} bytes
+                      </span>
+                      <span className="text-zinc-600">•</span>
+                      <span className="text-[11px] text-zinc-500">
+                        Unlimited executions permitted
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
+                      {/* RUN CODE BUTTON */}
+                      <button
+                        id="arena-run-code-btn"
+                        onClick={handleRunCode}
+                        disabled={
+                          submittingRun ||
+                          solvingLocked ||
+                          challengeDetails.status === 'LOCKED' ||
+                          !editorSource.trim()
+                        }
+                        className={`px-5 py-2.5 rounded-xl font-bold font-mono text-xs flex items-center gap-2 transition-all cursor-pointer shadow-lg min-h-[44px] ${
+                          submittingRun
+                            ? 'bg-blue-600 text-white opacity-80 cursor-wait'
+                            : solvingLocked || challengeDetails.status === 'LOCKED' || !editorSource.trim()
+                            ? 'bg-zinc-800 text-zinc-500 border border-zinc-700 cursor-not-allowed'
+                            : 'bg-emerald-500 hover:bg-emerald-400 text-black shadow-emerald-500/20 active:scale-95'
+                        }`}
+                      >
+                        {submittingRun ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            <span>SUBMITTING...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Play className="w-4 h-4 fill-current" />
+                            <span>RUN CODE</span>
+                          </>
+                        )}
+                      </button>
                     </div>
                   </div>
                 </div>
 
-                {/* Problem Description Statement */}
-                <div className="space-y-1">
-                  <div className="text-[10px] uppercase text-zinc-500 font-bold tracking-wider">
-                    PROBLEM STATEMENT
-                  </div>
+                {/* Validation/Run Error Alert */}
+                {runError && (
                   <div
-                    id="arena-problem-description"
-                    className="p-3.5 rounded-lg bg-zinc-900/70 border border-zinc-800 text-xs text-zinc-200 leading-relaxed font-sans whitespace-pre-wrap"
+                    id="arena-run-error-alert"
+                    className="p-3 rounded-lg bg-red-950/30 border border-red-500/40 text-red-300 text-xs flex items-center gap-2"
                   >
-                    {challengeDetails.description}
+                    <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
+                    <span>{runError}</span>
                   </div>
-                </div>
+                )}
 
-                {/* Public Constraints Pills */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
-                  <div className="p-2 rounded bg-zinc-900/60 border border-zinc-850">
-                    <span className="text-[9px] text-zinc-500 uppercase font-bold block">Validation</span>
-                    <span className="font-mono text-zinc-300 font-bold">{challengeDetails.validationType}</span>
-                  </div>
-                  <div className="p-2 rounded bg-zinc-900/60 border border-zinc-850">
-                    <span className="text-[9px] text-zinc-500 uppercase font-bold block">Time Limit</span>
-                    <span className="font-mono text-zinc-300 font-bold">{challengeDetails.timeLimitMs} ms</span>
-                  </div>
-                  <div className="p-2 rounded bg-zinc-900/60 border border-zinc-850">
-                    <span className="text-[9px] text-zinc-500 uppercase font-bold block">Memory Limit</span>
-                    <span className="font-mono text-zinc-300 font-bold">{challengeDetails.memoryLimitMb} MB</span>
-                  </div>
-                  <div className="p-2 rounded bg-zinc-900/60 border border-zinc-850">
-                    <span className="text-[9px] text-zinc-500 uppercase font-bold block">Attempts</span>
-                    <span className="font-mono text-zinc-300 font-bold">{challengeDetails.attemptCount} (unlimited)</span>
-                  </div>
+                {/* Mobile Navigation Action */}
+                <div className="lg:hidden flex items-center justify-between gap-3 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setMobileTab('problem')}
+                    className="py-2.5 px-4 rounded-xl bg-zinc-900 hover:bg-zinc-850 text-zinc-300 text-xs font-bold border border-zinc-800 transition-colors min-h-[44px] cursor-pointer"
+                  >
+                    ← View Problem
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMobileTab('output')}
+                    className="py-2.5 px-4 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold shadow-lg shadow-cyan-600/20 transition-colors min-h-[44px] flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <span>Console & Flag</span>
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
                 </div>
               </div>
 
-              {/* Public Test Cases Preview */}
-              {challengeDetails.publicTestCases && challengeDetails.publicTestCases.length > 0 && (
-                <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-3.5 space-y-2">
-                  <div className="text-[10px] uppercase text-zinc-500 font-bold tracking-wider flex items-center justify-between">
-                    <span>PUBLIC TEST CASES (EXEMPLARS)</span>
-                    <span className="text-zinc-500 font-normal">Hidden test cases evaluated on server</span>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
-                    {challengeDetails.publicTestCases.map((tc, i) => (
-                      <div key={tc.id || `tc-${tc.displayOrder || i}`} className="p-2.5 rounded-lg bg-zinc-900/80 border border-zinc-850 text-xs space-y-1.5 flex flex-col justify-between">
-                        <div className="space-y-1">
-                          <div className="text-[10px] font-bold text-zinc-400 uppercase flex items-center justify-between">
-                            <span>Test Case #{tc.displayOrder ?? i + 1}</span>
-                          </div>
-                          <div>
-                            <span className="text-[9px] text-zinc-500 uppercase font-bold block">Input:</span>
-                            <pre className="font-mono text-zinc-300 bg-zinc-950 p-1.5 rounded border border-zinc-850/60 text-[11px] overflow-x-auto whitespace-pre-wrap break-all">
-                              {tc.inputData}
-                            </pre>
-                          </div>
-                          <div>
-                            <span className="text-[9px] text-zinc-500 uppercase font-bold block">Expected Output:</span>
-                            <pre className="font-mono text-emerald-400 bg-zinc-950 p-1.5 rounded border border-zinc-850/60 text-[11px] overflow-x-auto whitespace-pre-wrap break-all">
-                              {tc.expectedOutput}
-                            </pre>
-                          </div>
-                        </div>
-                        {tc.explanation && (
-                          <div className="pt-1.5 border-t border-zinc-850/80">
-                            <span className="text-[9px] text-zinc-500 uppercase font-bold block">Explanation:</span>
-                            <div className="text-[11px] text-zinc-400 italic leading-snug">
-                              {tc.explanation}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
               {/* ================================================================= */}
-              {/* 12. MONACO JAVA EDITOR                                           */}
+              {/* SECTION C: OUTPUT & FLAG AREA (<lg: mobileTab === 'output')      */}
               {/* ================================================================= */}
               <div
-                id="arena-monaco-container"
-                className="bg-zinc-950 border border-zinc-800 rounded-xl overflow-hidden shadow-2xl space-y-0"
+                id="arena-output-and-flag-section"
+                className={`space-y-4 ${mobileTab === 'output' ? 'block' : 'hidden lg:block'}`}
               >
-                {/* Editor Header Bar */}
-                <div className="bg-zinc-900/90 px-4 py-2 border-b border-zinc-800 flex items-center justify-between text-xs">
-                  <div className="flex items-center gap-2">
-                    <FileCode className="w-4 h-4 text-amber-400" />
-                    <span className="font-bold text-zinc-100 font-mono">Main.java</span>
-                    <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-amber-950/80 text-amber-300 border border-amber-700/60">
-                      Buggy Code (Debug Required)
-                    </span>
-                    <span className="text-[10px] text-zinc-500 font-normal hidden sm:inline">• OpenJDK 21</span>
-                    {hasDraft && (
-                      <span className="text-[10px] px-2 py-0.5 rounded bg-zinc-800 text-cyan-300 border border-zinc-700 flex items-center gap-1">
-                        <Save className="w-3 h-3" />
-                        <span>Draft Saved Locally</span>
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <button
-                      id="arena-reset-code-btn"
-                      onClick={handleResetStarterCode}
-                      disabled={isPaused || isEnded || isFullscreenExited}
-                      className={`px-2.5 py-1 rounded text-[11px] font-bold border flex items-center gap-1.5 transition-colors ${
-                        isPaused || isEnded || isFullscreenExited
-                          ? 'bg-zinc-900 text-zinc-600 border-zinc-800 cursor-not-allowed opacity-50'
-                          : 'bg-zinc-800 hover:bg-zinc-750 text-zinc-300 hover:text-white border-zinc-700 cursor-pointer'
-                      }`}
-                      title={
-                        isPaused || isEnded || isFullscreenExited
-                          ? 'Reset disabled while fullscreen or competition is inactive'
-                          : 'Reset editor back to initial buggy Java code'
-                      }
-                    >
-                      <RotateCcw className="w-3 h-3" />
-                      <span>Reset Buggy Code</span>
-                    </button>
-                  </div>
-                </div>
-
-                {/* Monaco Editor Canvas */}
+                {/* =============================================================== */}
+                {/* 20. OUTPUT CONSOLE (Terminal Style)                            */}
+                {/* =============================================================== */}
                 <div
-                  ref={editorContainerRef}
-                  id="monaco-canvas-wrapper"
-                  className="relative h-[460px] w-full bg-[#1e1e1e] overflow-hidden"
-                >
-                  <Editor
-                    height="100%"
-                    defaultLanguage="java"
-                    language="java"
-                    theme="vs-dark"
-                    value={editorSource}
-                    onChange={handleEditorChange}
-                    onMount={handleEditorDidMount}
-                    options={{
-                      minimap: { enabled: false },
-                      fontSize: 14,
-                      lineHeight: 22,
-                      letterSpacing: 0,
-                      fontLigatures: false,
-                      fontFamily:
-                        "'JetBrains Mono', Menlo, Monaco, Consolas, 'Courier New', monospace",
-                      lineNumbers: 'on',
-                      automaticLayout: true,
-                      scrollBeyondLastLine: false,
-                      tabSize: 4,
-                      renderWhitespace: 'selection',
-                      bracketPairColorization: { enabled: true },
-                      folding: true,
-                      wordWrap: 'on',
-                      cursorBlinking: 'blink',
-                      cursorStyle: 'line',
-                      cursorWidth: 2,
-                      readOnly: isPaused || isEnded || isFullscreenExited,
-                    }}
-                  />
-                </div>
-
-                {/* Editor Action & Run Footer */}
-                <div className="bg-zinc-900/90 px-4 py-3 border-t border-zinc-800 flex flex-col sm:flex-row items-center justify-between gap-3">
-                  <div className="flex items-center gap-3 text-xs text-zinc-400">
-                    <span className="font-mono">
-                      {new TextEncoder().encode(editorSource).length} /{' '}
-                      {challengeDetails.maxSourceBytes || 65536} bytes
-                    </span>
-                    <span className="text-zinc-600">•</span>
-                    <span className="text-[11px] text-zinc-500">
-                      Unlimited executions permitted
-                    </span>
-                  </div>
-
-                  <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
-                    {/* RUN CODE BUTTON */}
-                    <button
-                      id="arena-run-code-btn"
-                      onClick={handleRunCode}
-                      disabled={
-                        submittingRun ||
-                        isPaused ||
-                        isEnded ||
-                        isFullscreenExited ||
-                        challengeDetails.status === 'LOCKED' ||
-                        !editorSource.trim()
-                      }
-                      className={`px-5 py-2 rounded-xl font-bold font-mono text-xs flex items-center gap-2 transition-all cursor-pointer shadow-lg ${
-                        submittingRun
-                          ? 'bg-blue-600 text-white opacity-80 cursor-wait'
-                          : isPaused || isEnded || isFullscreenExited || challengeDetails.status === 'LOCKED'
-                          ? 'bg-zinc-800 text-zinc-500 border border-zinc-700 cursor-not-allowed'
-                          : 'bg-emerald-500 hover:bg-emerald-400 text-black shadow-emerald-500/20 active:scale-95'
-                      }`}
-                    >
-                      {submittingRun ? (
-                        <>
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                          <span>SUBMITTING...</span>
-                        </>
-                      ) : (
-                        <>
-                          <Play className="w-4 h-4 fill-current" />
-                          <span>RUN CODE</span>
-                        </>
-                      )}
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              {/* Validation/Run Error Alert */}
-              {runError && (
-                <div
-                  id="arena-run-error-alert"
-                  className="p-3 rounded-lg bg-red-950/30 border border-red-500/40 text-red-300 text-xs flex items-center gap-2"
-                >
-                  <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
-                  <span>{runError}</span>
-                </div>
-              )}
-
-              {/* ================================================================= */}
-              {/* 20. OUTPUT CONSOLE (Terminal Style)                              */}
-              {/* ================================================================= */}
-              <div
-                id="arena-output-console"
+                  id="arena-output-console"
                 className="bg-zinc-950 border border-zinc-800 rounded-xl overflow-hidden shadow-xl"
               >
                 <div className="bg-zinc-900/80 px-4 py-2 border-b border-zinc-800 flex items-center justify-between text-xs">
@@ -2528,7 +2851,26 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
                   </div>
                 )}
               </div>
+
+              {/* Mobile Navigation Action for Output & Flag */}
+              <div className="lg:hidden flex items-center justify-between gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setMobileTab('editor')}
+                  className="py-2.5 px-4 rounded-xl bg-zinc-900 hover:bg-zinc-850 text-zinc-300 text-xs font-bold border border-zinc-800 transition-colors min-h-[44px] cursor-pointer flex items-center gap-1.5"
+                >
+                  <span>← Back to Code</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMobileTab('challenges')}
+                  className="py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold shadow-lg shadow-blue-600/20 transition-colors min-h-[44px] cursor-pointer"
+                >
+                  All Challenges →
+                </button>
+              </div>
             </div>
+          </div>
           ) : (
             <div className="bg-zinc-950 border border-dashed border-zinc-800 rounded-xl p-16 text-center space-y-3">
               <Terminal className="w-10 h-10 text-zinc-600 mx-auto" />

@@ -146,7 +146,8 @@ export function updateFromServer(data: Partial<AuthoritativeTimerSnapshot>): voi
   const isMatchChange =
     timerState.isInitialized &&
     ((typeof data.currentMatchNumber === 'number' && data.currentMatchNumber !== timerState.currentMatchNumber) ||
-      (data.currentMatchId && timerState.currentMatchId && data.currentMatchId !== timerState.currentMatchId));
+      (Boolean(data.currentMatchId) && Boolean(timerState.currentMatchId) && data.currentMatchId !== timerState.currentMatchId) ||
+      (Boolean(data.currentMatchId) && !timerState.currentMatchId));
 
   if (isMatchChange) {
     timerState.currentMatchNumber = newMatchNumber;
@@ -247,7 +248,7 @@ export function useAuthoritativeTimer(initialTimer?: Partial<AuthoritativeTimerS
   if (initialTimer) {
     const isNewerMatch =
       (typeof initialTimer.currentMatchNumber === 'number' && initialTimer.currentMatchNumber !== timerState.currentMatchNumber) ||
-      (initialTimer.currentMatchId && initialTimer.currentMatchId !== timerState.currentMatchId);
+      (Boolean(initialTimer.currentMatchId) && initialTimer.currentMatchId !== timerState.currentMatchId);
     if (!timerState.isInitialized || isNewerMatch) {
       updateFromServer(initialTimer);
     }

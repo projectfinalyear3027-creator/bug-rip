@@ -215,6 +215,7 @@ export const ParticipantExperience: React.FC<ParticipantExperienceProps> = () =>
   // Route: /arena (Participant Coding Arena)
   return (
     <ParticipantArena
+      key={`arena-${authenticatedTeam.id}-${currentMatchId || currentMatchNumber}`}
       team={authenticatedTeam}
       eventStatus={eventStatus}
       currentMatchNumber={currentMatchNumber}

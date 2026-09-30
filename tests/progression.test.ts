@@ -50,6 +50,7 @@ async function runProgressionTestSuite() {
   // Initialize DB
   await runMigrations();
   await runSeed();
+  await eventRepository.updateEventStatus('RUNNING');
 
   const superAdmin = (
     await db

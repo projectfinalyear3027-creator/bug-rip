@@ -1407,20 +1407,18 @@ export class AdminRepository {
             message: `${matchName} initialized in NOT_STARTED state. Waiting room active.`,
             timestamp: now.toISOString(),
           });
-          teamRealtimeService.broadcastGlobal('match.reset', {
-            matchNumber: nextMatchNumber,
-            matchName,
-          });
           teamRealtimeService.broadcastToAdmin('match.reset', {
             matchNumber: nextMatchNumber,
             matchName,
             matchId: newMatch.id,
+            durationMinutes,
             timestamp: now.toISOString(),
           });
           teamRealtimeService.broadcastToAdmin('admin.match.reset', {
             matchNumber: nextMatchNumber,
             matchName,
             matchId: newMatch.id,
+            durationMinutes,
             timestamp: now.toISOString(),
           });
           teamRealtimeService.broadcastGlobal('match.reset', {
