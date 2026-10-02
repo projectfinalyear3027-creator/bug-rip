@@ -14,6 +14,7 @@ import {
   competitionMatches,
 } from '../../src/db/schema.ts';
 import { teamRepository } from './teamRepository.ts';
+import { presenceService } from '../services/presenceService.ts';
 
 export class EventRepository {
   /**
@@ -72,6 +73,7 @@ export class EventRepository {
     if (updated.length > 0) {
       try {
         const matchNum = updated[0].currentMatchNumber || 1;
+        presenceService.onMatchEnded(matchNum);
         const finalLb = await this.getLeaderboard();
         await db
           .update(competitionMatches)

@@ -46,6 +46,7 @@ export const LiveScoreboardExperience: React.FC<LiveScoreboardExperienceProps> =
   currentTheme = 'cyber-obsidian',
 }) => {
   const [leaderboard, setLeaderboard] = useState<PublicLeaderboardEntry[]>([]);
+  const [onlineCount, setOnlineCount] = useState<number>(0);
   const [eventStatus, setEventStatus] = useState<EventStatusState>({
     status: 'NOT_STARTED',
     remainingSeconds: 3600,
@@ -90,6 +91,9 @@ export const LiveScoreboardExperience: React.FC<LiveScoreboardExperienceProps> =
         if (data.success && Array.isArray(data.data || data.leaderboard)) {
           const freshList: PublicLeaderboardEntry[] = data.data || data.leaderboard;
           handleLeaderboardUpdate(freshList);
+          if (typeof data.onlineCount === 'number') {
+            setOnlineCount(data.onlineCount);
+          }
         }
         setIsArchivedView(Boolean(data.isArchivedMatch));
         if (data.event) {
@@ -150,6 +154,8 @@ export const LiveScoreboardExperience: React.FC<LiveScoreboardExperienceProps> =
     }
 
     setLeaderboard(newList);
+    const active = newList.filter((e) => Boolean(e.isOnline)).length;
+    setOnlineCount(active);
     setLastUpdated(new Date().toISOString());
   };
 
@@ -197,6 +203,9 @@ export const LiveScoreboardExperience: React.FC<LiveScoreboardExperienceProps> =
         es.addEventListener('leaderboard.init', (e: MessageEvent) => {
           try {
             const parsed = JSON.parse(e.data);
+            if (typeof parsed.onlineCount === 'number') {
+              setOnlineCount(parsed.onlineCount);
+            }
             if (parsed.leaderboard) {
               handleLeaderboardUpdate(parsed.leaderboard);
             }
@@ -214,6 +223,9 @@ export const LiveScoreboardExperience: React.FC<LiveScoreboardExperienceProps> =
         es.addEventListener('leaderboard.updated', (e: MessageEvent) => {
           try {
             const parsed = JSON.parse(e.data);
+            if (typeof parsed.onlineCount === 'number') {
+              setOnlineCount(parsed.onlineCount);
+            }
             if (parsed.leaderboard) {
               handleLeaderboardUpdate(parsed.leaderboard);
             }
@@ -225,6 +237,33 @@ export const LiveScoreboardExperience: React.FC<LiveScoreboardExperienceProps> =
             }
           } catch (parseErr) {
             console.warn('[LiveScoreboard] Error parsing leaderboard.updated:', parseErr);
+          }
+        });
+
+        es.addEventListener('presence.updated', (e: MessageEvent) => {
+          try {
+            const parsed = JSON.parse(e.data);
+            if (typeof parsed.onlineCount === 'number') {
+              setOnlineCount(parsed.onlineCount);
+            }
+            if (parsed.presenceMap) {
+              setLeaderboard((prev) => {
+                return prev.map((entry) => {
+                  const pId = entry.participantId || entry.participantName || entry.teamName;
+                  if (parsed.presenceMap[pId] !== undefined) {
+                    const isOnline = Boolean(parsed.presenceMap[pId]);
+                    return {
+                      ...entry,
+                      isOnline,
+                      connectedMembers: isOnline ? 1 : 0,
+                    };
+                  }
+                  return entry;
+                });
+              });
+            }
+          } catch (parseErr) {
+            console.warn('[LiveScoreboard] Error parsing presence.updated:', parseErr);
           }
         });
 
@@ -313,6 +352,193 @@ export const LiveScoreboardExperience: React.FC<LiveScoreboardExperienceProps> =
     const m = Math.floor(safeSec / 60);
     const s = safeSec % 60;
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  };
+
+  // Authoritative presentation ordering:
+  // 1. ONLINE participants first
+  // 2. Existing leaderboard ordering within each group (Solved DESC, Score DESC, timestamp ASC, Name ASC)
+  // 3. For archived match view, preserve canonical ranking order strictly.
+  const presentationLeaderboard = React.useMemo(() => {
+    if (isArchivedView) {
+      return [...leaderboard].sort((a, b) => a.rank - b.rank);
+    }
+    return [...leaderboard].sort((a, b) => {
+      const aOnline = Boolean(a.isOnline);
+      const bOnline = Boolean(b.isOnline);
+      if (aOnline !== bOnline) {
+        return aOnline ? -1 : 1;
+      }
+      if (a.problemsSolved !== b.problemsSolved) {
+        return b.problemsSolved - a.problemsSolved;
+      }
+      if (a.score !== b.score) {
+        return b.score - a.score;
+      }
+      const timeA = new Date(a.lastSolveTimestamp).getTime();
+      const timeB = new Date(b.lastSolveTimestamp).getTime();
+      if (timeA !== timeB) {
+        return timeA - timeB;
+      }
+      const nameA = a.participantName || a.teamName || '';
+      const nameB = b.participantName || b.teamName || '';
+      return nameA.localeCompare(nameB);
+    });
+  }, [leaderboard, isArchivedView]);
+
+  const onlineParticipants = React.useMemo(
+    () => (isArchivedView ? [] : presentationLeaderboard.filter((p) => Boolean(p.isOnline))),
+    [presentationLeaderboard, isArchivedView]
+  );
+
+  const offlineParticipants = React.useMemo(
+    () => (isArchivedView ? presentationLeaderboard : presentationLeaderboard.filter((p) => !p.isOnline)),
+    [presentationLeaderboard, isArchivedView]
+  );
+
+  const renderParticipantRow = (team: PublicLeaderboardEntry) => {
+    const recentChange = recentChanges[team.teamName];
+
+    return (
+      <tr
+        key={team.teamName}
+        id={`team-row-${team.rank}`}
+        className={`transition-all duration-500 ${
+          recentChange
+            ? 'bg-emerald-500/20 ring-1 ring-emerald-500/50'
+            : team.isOnline && !isArchivedView
+            ? 'bg-emerald-500/[0.04] hover:bg-emerald-500/[0.08]'
+            : team.rank === 1
+            ? 'bg-amber-500/5 hover:bg-amber-500/10'
+            : team.rank === 2
+            ? 'bg-zinc-800/20 hover:bg-zinc-800/30'
+            : team.rank === 3
+            ? 'bg-amber-900/10 hover:bg-amber-900/20'
+            : 'hover:bg-zinc-900/40'
+        }`}
+      >
+        {/* Rank Indicator (Preserves authoritative canonical rank) */}
+        <td className="py-4 px-4 sm:px-6 whitespace-nowrap">
+          <div className="flex items-center gap-2">
+            {team.rank === 1 ? (
+              <div className="flex items-center gap-1.5">
+                <span className="w-8 h-8 rounded-full bg-gradient-to-br from-amber-300 to-amber-500 text-zinc-950 font-black flex items-center justify-center text-sm shadow-lg shadow-amber-500/20">
+                  1
+                </span>
+                <Medal className="w-4 h-4 text-amber-400 shrink-0" />
+              </div>
+            ) : team.rank === 2 ? (
+              <div className="flex items-center gap-1.5">
+                <span className="w-8 h-8 rounded-full bg-gradient-to-br from-slate-200 to-slate-400 text-zinc-950 font-black flex items-center justify-center text-sm shadow-md">
+                  2
+                </span>
+                <Medal className="w-4 h-4 text-slate-300 shrink-0" />
+              </div>
+            ) : team.rank === 3 ? (
+              <div className="flex items-center gap-1.5">
+                <span className="w-8 h-8 rounded-full bg-gradient-to-br from-amber-700 to-amber-900 text-amber-100 font-black flex items-center justify-center text-sm shadow-md">
+                  3
+                </span>
+                <Medal className="w-4 h-4 text-amber-600 shrink-0" />
+              </div>
+            ) : (
+              <span className="text-zinc-400 font-bold px-3 text-sm">
+                #{team.rank}
+              </span>
+            )}
+
+            {recentChange?.type === 'rank_up' && (
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-500 text-zinc-950 animate-pulse">
+                ▲ UP
+              </span>
+            )}
+          </div>
+        </td>
+
+        {/* Competitor Name */}
+        <td className="py-4 px-4 sm:px-6 whitespace-nowrap">
+          <div className="flex items-center gap-2">
+            <span className={`font-bold text-white ${isBigScreen ? 'text-lg' : 'text-sm'}`}>
+              {team.participantName || team.teamName}
+            </span>
+            {team.rank === 1 && (
+              <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-300">
+                Tournament Leader
+              </span>
+            )}
+          </div>
+        </td>
+
+        {/* Online / Offline Presence Status */}
+        <td className="py-4 px-4 sm:px-6 whitespace-nowrap text-center">
+          {isArchivedView ? (
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-zinc-900 border border-zinc-800 text-[11px] text-zinc-400 font-bold">
+              <CheckCircle className="w-3.5 h-3.5 text-zinc-500" />
+              <span>FINAL</span>
+            </div>
+          ) : team.isOnline ? (
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-emerald-500/15 border border-emerald-500/40 text-[11px] font-bold text-emerald-400 shadow-sm">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              <span>🟢 ONLINE</span>
+            </div>
+          ) : (
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-zinc-900/90 border border-zinc-800 text-[11px] font-bold text-zinc-400">
+              <span className="w-2 h-2 rounded-full bg-zinc-500" />
+              <span>⚪ OFFLINE</span>
+            </div>
+          )}
+        </td>
+
+        {/* Problems Solved (PRIMARY CRITERION) */}
+        <td className="py-4 px-4 sm:px-6 whitespace-nowrap text-center">
+          <div className="inline-flex items-center gap-1.5">
+            <span
+              className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl font-black ${
+                isBigScreen ? 'text-base' : 'text-sm'
+              } ${
+                team.problemsSolved > 0
+                  ? 'bg-emerald-500/20 border border-emerald-500/40 text-emerald-300'
+                  : 'bg-zinc-900 border border-zinc-800 text-zinc-500'
+              }`}
+            >
+              <CheckCircle className="w-4 h-4 text-emerald-400" />
+              <span>{team.problemsSolved} SOLVED</span>
+            </span>
+
+            {recentChange?.type === 'solve' && (
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-400 text-zinc-950 animate-bounce">
+                +SOLVE!
+              </span>
+            )}
+          </div>
+        </td>
+
+        {/* Score (SECONDARY CRITERION) */}
+        <td className="py-4 px-4 sm:px-6 whitespace-nowrap text-right font-black text-amber-400">
+          <span className={`${isBigScreen ? 'text-xl' : 'text-base'}`}>
+            {team.score.toLocaleString()}
+          </span>
+          <span className="text-xs text-amber-500/80 ml-1 font-semibold">PTS</span>
+        </td>
+
+        {/* Last Solve Timestamp (TIEBREAKER) */}
+        <td className="py-4 px-4 sm:px-6 whitespace-nowrap text-right text-zinc-400 text-xs">
+          {team.problemsSolved > 0 ? (
+            <div className="space-y-0.5">
+              <span className="font-mono text-zinc-300">
+                {new Date(team.lastSolveTimestamp).toLocaleTimeString([], {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  second: '2-digit',
+                })}
+              </span>
+              <div className="text-[10px] text-zinc-500">Solve Tiebreaker</div>
+            </div>
+          ) : (
+            <span className="text-zinc-600">—</span>
+          )}
+        </td>
+      </tr>
+    );
   };
 
   const toggleFullscreen = () => {
@@ -488,6 +714,12 @@ export const LiveScoreboardExperience: React.FC<LiveScoreboardExperienceProps> =
               <span>COLLEGIATE TECHNICAL SYMPOSIUM • JAVA DEBUGGING CTF</span>
             </div>
             {getStatusBadge()}
+            {!isArchivedView && (
+              <div id="live-online-pill" className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-emerald-500/40 bg-emerald-500/15 text-emerald-300 font-mono text-xs font-bold shadow-md">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
+                <span>ONLINE {onlineParticipants.length} / {leaderboard.length}</span>
+              </div>
+            )}
           </div>
 
           <h1 className={`${isBigScreen ? 'text-5xl sm:text-6xl' : 'text-4xl sm:text-5xl'} font-black text-white font-mono tracking-tight`}>
@@ -577,6 +809,15 @@ export const LiveScoreboardExperience: React.FC<LiveScoreboardExperienceProps> =
             <span className="text-zinc-400 font-normal">
               {leaderboard.length} Registered {leaderboard.length === 1 ? 'Competitor' : 'Competitors'}
             </span>
+            {!isArchivedView && (
+              <>
+                <span className="text-zinc-600">|</span>
+                <div id="live-online-counter-badge" className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 text-emerald-400 font-bold text-xs">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                  <span>ONLINE {onlineParticipants.length} / {leaderboard.length}</span>
+                </div>
+              </>
+            )}
           </div>
 
           <div className="flex items-center gap-3 text-[11px] text-zinc-400">
@@ -612,140 +853,35 @@ export const LiveScoreboardExperience: React.FC<LiveScoreboardExperienceProps> =
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-800/60 text-xs">
-                {leaderboard.map((team) => {
-                  const isPodium = team.rank <= 3;
-                  const recentChange = recentChanges[team.teamName];
-
-                  return (
-                    <tr
-                      key={team.teamName}
-                      id={`team-row-${team.rank}`}
-                      className={`transition-all duration-500 ${
-                        recentChange
-                          ? 'bg-emerald-500/20 ring-1 ring-emerald-500/50'
-                          : team.rank === 1
-                          ? 'bg-amber-500/5 hover:bg-amber-500/10'
-                          : team.rank === 2
-                          ? 'bg-zinc-800/20 hover:bg-zinc-800/30'
-                          : team.rank === 3
-                          ? 'bg-amber-900/10 hover:bg-amber-900/20'
-                          : 'hover:bg-zinc-900/40'
-                      }`}
-                    >
-                      {/* Rank Indicator */}
-                      <td className="py-4 px-4 sm:px-6 whitespace-nowrap">
-                        <div className="flex items-center gap-2">
-                          {team.rank === 1 ? (
-                            <div className="flex items-center gap-1.5">
-                              <span className="w-8 h-8 rounded-full bg-gradient-to-br from-amber-300 to-amber-500 text-zinc-950 font-black flex items-center justify-center text-sm shadow-lg shadow-amber-500/20">
-                                1
-                              </span>
-                              <Medal className="w-4 h-4 text-amber-400 shrink-0" />
-                            </div>
-                          ) : team.rank === 2 ? (
-                            <div className="flex items-center gap-1.5">
-                              <span className="w-8 h-8 rounded-full bg-gradient-to-br from-slate-200 to-slate-400 text-zinc-950 font-black flex items-center justify-center text-sm shadow-md">
-                                2
-                              </span>
-                              <Medal className="w-4 h-4 text-slate-300 shrink-0" />
-                            </div>
-                          ) : team.rank === 3 ? (
-                            <div className="flex items-center gap-1.5">
-                              <span className="w-8 h-8 rounded-full bg-gradient-to-br from-amber-700 to-amber-900 text-amber-100 font-black flex items-center justify-center text-sm shadow-md">
-                                3
-                              </span>
-                              <Medal className="w-4 h-4 text-amber-600 shrink-0" />
-                            </div>
-                          ) : (
-                            <span className="text-zinc-400 font-bold px-3 text-sm">
-                              #{team.rank}
-                            </span>
-                          )}
-
-                          {recentChange?.type === 'rank_up' && (
-                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-500 text-zinc-950 animate-pulse">
-                              ▲ UP
-                            </span>
-                          )}
-                        </div>
-                      </td>
-
-                      {/* Competitor Name */}
-                      <td className="py-4 px-4 sm:px-6 whitespace-nowrap">
-                        <div className="flex items-center gap-2">
-                          <span className={`font-bold text-white ${isBigScreen ? 'text-lg' : 'text-sm'}`}>
-                            {team.participantName || team.teamName}
-                          </span>
-                          {team.rank === 1 && (
-                            <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-300">
-                              Tournament Leader
-                            </span>
-                          )}
-                        </div>
-                      </td>
-
-                      {/* Solo Competitor Active Status */}
-                      <td className="py-4 px-4 sm:px-6 whitespace-nowrap text-center">
-                        <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-zinc-900 border border-zinc-800 text-[11px] text-zinc-300">
-                          <Users className="w-3.5 h-3.5 text-cyan-400" />
-                          <span className="font-bold">
-                            {team.connectedMembers > 0 ? 'ONLINE' : 'OFFLINE'}
-                          </span>
-                        </div>
-                      </td>
-
-                      {/* Problems Solved (PRIMARY CRITERION) */}
-                      <td className="py-4 px-4 sm:px-6 whitespace-nowrap text-center">
-                        <div className="inline-flex items-center gap-1.5">
-                          <span
-                            className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl font-black ${
-                              isBigScreen ? 'text-base' : 'text-sm'
-                            } ${
-                              team.problemsSolved > 0
-                                ? 'bg-emerald-500/20 border border-emerald-500/40 text-emerald-300'
-                                : 'bg-zinc-900 border border-zinc-800 text-zinc-500'
-                            }`}
-                          >
-                            <CheckCircle className="w-4 h-4 text-emerald-400" />
-                            <span>{team.problemsSolved} SOLVED</span>
-                          </span>
-
-                          {recentChange?.type === 'solve' && (
-                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-400 text-zinc-950 animate-bounce">
-                              +SOLVE!
-                            </span>
-                          )}
-                        </div>
-                      </td>
-
-                      {/* Score (SECONDARY CRITERION) */}
-                      <td className="py-4 px-4 sm:px-6 whitespace-nowrap text-right font-black text-amber-400">
-                        <span className={`${isBigScreen ? 'text-xl' : 'text-base'}`}>
-                          {team.score.toLocaleString()}
-                        </span>
-                        <span className="text-xs text-amber-500/80 ml-1 font-semibold">PTS</span>
-                      </td>
-
-                      {/* Last Solve Timestamp (TIEBREAKER) */}
-                      <td className="py-4 px-4 sm:px-6 whitespace-nowrap text-right text-zinc-400 text-xs">
-                        {team.problemsSolved > 0 ? (
-                          <div className="space-y-0.5">
-                            <span className="font-mono text-zinc-300">
-                              {new Date(team.lastSolveTimestamp).toLocaleTimeString([], {
-                                hour: '2-digit',
-                                minute: '2-digit',
-                                second: '2-digit',
-                              })}
-                            </span>
-                            <div className="text-[10px] text-zinc-500">Solve Tiebreaker</div>
+                {isArchivedView ? (
+                  presentationLeaderboard.map(renderParticipantRow)
+                ) : (
+                  <>
+                    {onlineParticipants.length > 0 && (
+                      <tr className="bg-emerald-950/40 border-y border-emerald-500/30">
+                        <td colSpan={6} className="py-2.5 px-4 sm:px-6">
+                          <div className="flex items-center gap-2 text-xs font-black font-mono text-emerald-400 tracking-wider uppercase">
+                            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                            <span>🟢 ONLINE ({onlineParticipants.length})</span>
                           </div>
-                        ) : (
-                          <span className="text-zinc-600">—</span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
+                        </td>
+                      </tr>
+                    )}
+                    {onlineParticipants.map(renderParticipantRow)}
+
+                    {offlineParticipants.length > 0 && (
+                      <tr className="bg-zinc-900/60 border-y border-zinc-800">
+                        <td colSpan={6} className="py-2.5 px-4 sm:px-6">
+                          <div className="flex items-center gap-2 text-xs font-black font-mono text-zinc-400 tracking-wider uppercase">
+                            <span className="w-2 h-2 rounded-full bg-zinc-500" />
+                            <span>⚪ OFFLINE ({offlineParticipants.length})</span>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                    {offlineParticipants.map(renderParticipantRow)}
+                  </>
+                )}
               </tbody>
             </table>
           )}

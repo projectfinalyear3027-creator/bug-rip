@@ -57,8 +57,9 @@ export class ExecutionQueueManager extends EventEmitter {
       return { mode: 'in-memory' };
     }
 
+    let client: IORedis | null = null;
     try {
-      const client = new IORedis(redisUrl, {
+      client = new IORedis(redisUrl, {
         maxRetriesPerRequest: null,
         connectTimeout: 2500,
         retryStrategy: (times) => Math.min(times * 150, 2000),
@@ -99,6 +100,11 @@ export class ExecutionQueueManager extends EventEmitter {
         return { mode: 'redis' };
       }
     } catch (err: any) {
+      if (client) {
+        try {
+          client.disconnect();
+        } catch {}
+      }
       if (isProduction) {
         throw new Error(
           `[ExecutionQueue] CRITICAL INFRASTRUCTURE FAILURE: Redis is mandatory in production (NODE_ENV=production). Failed to connect to Redis at ${redisUrl}: ${err?.message || 'Connection refused'}. In-memory fallback is disabled in production.`
@@ -143,6 +149,8 @@ export class ExecutionQueueManager extends EventEmitter {
           concurrency,
         }
       );
+    } else {
+      setImmediate(() => this.processNextInMemoryJob());
     }
   }
 
@@ -150,10 +158,11 @@ export class ExecutionQueueManager extends EventEmitter {
    * Process pending in-memory jobs with bounded concurrency
    */
   private processNextInMemoryJob() {
+    if (!this.jobHandler) return;
     const maxConcurrency = getMaxConcurrentExecutions();
     while (this.inMemoryRunningCount < maxConcurrency && this.inMemoryQueue.length > 0) {
       const nextJob = this.inMemoryQueue.shift();
-      if (!nextJob || !this.jobHandler) break;
+      if (!nextJob) break;
 
       this.inMemoryRunningCount++;
       (async () => {
@@ -230,11 +239,17 @@ export class ExecutionQueueManager extends EventEmitter {
    * Close queue connections gracefully
    */
   public async close(): Promise<void> {
+    if (this.worker) {
+      await this.worker.close().catch(() => {});
+      this.worker = null;
+    }
     if (this.queue) {
-      await this.queue.close();
+      await this.queue.close().catch(() => {});
+      this.queue = null;
     }
     if (this.redisConnection) {
-      await this.redisConnection.quit();
+      await this.redisConnection.quit().catch(() => {});
+      this.redisConnection = null;
     }
   }
 }

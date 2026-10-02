@@ -16,6 +16,7 @@ import { eventRepository } from '../repositories/eventRepository.ts';
 import { antiCheatRepository } from '../repositories/antiCheatRepository.ts';
 import { eventService } from '../services/eventService.ts';
 import { teamRealtimeService } from '../services/teamRealtimeService.ts';
+import { presenceService } from '../services/presenceService.ts';
 import { loginRateLimiter } from '../middleware/rateLimiter.ts';
 import { requireParticipantAuth, extractToken } from '../middleware/authMiddleware.ts';
 import { db } from '../../src/db/index.ts';
@@ -359,16 +360,40 @@ authRouter.post('/heartbeat', requireParticipantAuth, async (req: Request, res: 
   try {
     const team = req.team!;
     const session = req.sessionRecord!;
+    const participant = req.participant;
+    const participantId = participant?.id || session.participantId || team.id;
+
+    // Security: Participant can ONLY update their own presence
+    const bodyParticipantId = req.body?.participantId || req.query?.participantId;
+    if (bodyParticipantId && bodyParticipantId !== participantId) {
+      return res.status(403).json({
+        success: false,
+        error: 'Forbidden: You cannot update presence for another participant.',
+        code: 'PRESENCE_SPOOF_REJECTED',
+      });
+    }
 
     await teamRepository.updateSessionHeartbeat(session.id);
     const activeSessions = await teamRepository.getActiveSessionCount(team.id);
-    const settings = await eventRepository.getEventSettings();
+    const eventStatus = await eventService.getEventStatus();
+
+    const presenceResult = presenceService.recordHeartbeat({
+      participantId,
+      sessionId: session.id,
+      matchNumber: eventStatus.currentMatchNumber,
+      matchId: eventStatus.currentMatchId,
+      isEnded: eventStatus.status === 'ENDED',
+    });
 
     return res.json({
       ok: true,
-      eventStatus: settings?.status || 'NOT_STARTED',
+      eventStatus: eventStatus.status || 'NOT_STARTED',
       connectedMemberCount: activeSessions,
       registeredMemberCount: team.registeredMemberCount,
+      participantId,
+      matchNumber: eventStatus.currentMatchNumber,
+      isOnline: presenceResult.isOnline,
+      lastSeenAt: presenceResult.lastSeenAt,
     });
   } catch (err) {
     console.error('Heartbeat update error:', err);
@@ -396,6 +421,9 @@ authRouter.post('/logout', async (req: Request, res: Response) => {
       const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
       const sessionData = await teamRepository.findSessionByTokenHash(tokenHash);
       if (sessionData) {
+        const participantId = sessionData.participant?.id || sessionData.session.participantId || sessionData.team.id;
+        presenceService.recordLogout(participantId, sessionData.session.id);
+
         await teamRepository.terminateSession(sessionData.session.id);
         await teamRealtimeService.unregisterSession(sessionData.session.id);
 

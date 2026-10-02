@@ -68,7 +68,9 @@ export type ActiveTab = ActiveFoundationTab;
 export interface PublicLeaderboardEntry {
   rank: number;
   teamName: string;
+  participantId?: string;
   participantName?: string;
+  isOnline?: boolean;
   connectedMembers: number;
   registeredMembers: number;
   problemsSolved: number;

@@ -157,7 +157,7 @@ export const WaitingRoom: React.FC<WaitingRoomProps> = ({
       }
     };
 
-    const interval = setInterval(sendHeartbeat, 3000);
+    const interval = setInterval(sendHeartbeat, 10000);
     return () => clearInterval(interval);
   }, [onEventStart, onUpdateCounts]);
 

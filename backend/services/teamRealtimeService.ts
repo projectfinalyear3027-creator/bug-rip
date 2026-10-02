@@ -42,9 +42,15 @@ export class TeamRealtimeService {
 
   constructor() {
     this.startSafetyNet();
-    leaderboardRealtimeService.onEventStatusChanged = (statusData) => {
-      this.broadcastGlobal('event.status.changed', statusData);
-    };
+    queueMicrotask(() => {
+      try {
+        if (typeof leaderboardRealtimeService !== 'undefined' && leaderboardRealtimeService) {
+          leaderboardRealtimeService.onEventStatusChanged = (statusData) => {
+            this.broadcastGlobal('event.status.changed', statusData);
+          };
+        }
+      } catch {}
+    });
   }
 
   private startSafetyNet() {

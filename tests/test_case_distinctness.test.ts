@@ -127,12 +127,12 @@ async function runTestSuite() {
   try {
     // Attempt inserting a duplicate (challenge_id, is_hidden, display_order)
     await db.insert(challengeTestCases).values({
-      challengeId: 'EASY-01-FACTORIAL',
+      challengeId: 'EASY-01',
       testType: 'PUBLIC',
       inputData: '999',
       expectedOutput: 'Computed 999!: 0',
       isHidden: false,
-      displayOrder: 1, // displayOrder 1 already exists for EASY-01-FACTORIAL
+      displayOrder: 1, // displayOrder 1 already exists for EASY-01
     });
   } catch (err: any) {
     duplicateRejected = true;
@@ -169,6 +169,7 @@ async function runTestSuite() {
   if (failed > 0) {
     process.exit(1);
   }
+  process.exit(0);
 }
 
 runTestSuite().catch((err) => {

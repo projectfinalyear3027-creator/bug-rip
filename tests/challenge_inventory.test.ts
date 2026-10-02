@@ -231,6 +231,8 @@ async function runInventoryTestSuite() {
   );
 
   // Test 14: Public challenge API does not expose hidden tests, flags, or verifiers
+  // Set match status to RUNNING so participant can load challenge details
+  await db.update(eventSettings).set({ status: 'RUNNING', startedAt: new Date() }).where(eq(eventSettings.id, 1));
   // Enable UNLOCK_ALL temporarily so participant can inspect challenge DTOs across all tiers
   await progressionService.unlockAllDifficulties(adminId, 'Verify participant DTO safety across all tiers');
 

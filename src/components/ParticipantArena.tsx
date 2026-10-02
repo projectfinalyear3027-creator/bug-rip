@@ -576,7 +576,7 @@ export const ParticipantArena: React.FC<ParticipantArenaProps> = ({
       } catch {}
     };
     sendHeartbeat();
-    const interval = setInterval(sendHeartbeat, 5000);
+    const interval = setInterval(sendHeartbeat, 10000);
     return () => clearInterval(interval);
   }, []);
 

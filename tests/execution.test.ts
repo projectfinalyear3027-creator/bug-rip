@@ -270,6 +270,7 @@ public class Main {
   if (testsFailed > 0) {
     process.exit(1);
   }
+  process.exit(0);
 }
 
 runExecutionTestSuite().catch((err) => {

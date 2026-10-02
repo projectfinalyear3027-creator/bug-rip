@@ -397,6 +397,8 @@ async function runTestSuite() {
     assert(resRun.data?.data?.status === 'QUEUED', 'Execution request successfully enqueued in isolated sandbox');
 
     // Create an execution submission with behavior PASS and revealed flag
+    const { EASY_CHALLENGES } = await import('../database/challenges/easyChallenges.ts');
+    const chalFlag = EASY_CHALLENGES.find((c) => c.id === challengeId)?.flag || 'DBG{EVEN_SUM_6201A}';
     const execSub = await teamChallengeRepository.recordExecutionSubmission({
       teamId,
       participantId,
@@ -407,8 +409,8 @@ async function runTestSuite() {
     await teamChallengeRepository.updateExecutionSubmission(execSub.id, {
       executionStatus: 'SUCCESS',
       behaviorStatus: 'PASS',
-      revealedFlag: 'DBG{FACTORIAL_729X}',
-      stdout: 'FLAG REVEALED: DBG{FACTORIAL_729X}',
+      revealedFlag: chalFlag,
+      stdout: `FLAG REVEALED: ${chalFlag}`,
     });
 
     // Direct Flag Submission Request while RUNNING + Fullscreen: Must be accepted
@@ -418,7 +420,7 @@ async function runTestSuite() {
       sessionRecord: { id: sessionId, participantId, teamId },
       params: { id: challengeId },
       body: {
-        flag: 'DBG{FACTORIAL_729X}',
+        flag: chalFlag,
         executionId: execSub.id,
       },
     };
@@ -723,6 +725,7 @@ async function runTestSuite() {
   if (testsFailed > 0) {
     process.exit(1);
   }
+  process.exit(0);
 }
 
 runTestSuite().catch((err) => {

@@ -281,10 +281,10 @@ export class ProgressionService {
 
     // Check if team has unlocked this challenge/round
     const progression = await this.getTeamProgression(teamId);
-    const targetChallenge = progression.challenges.find((c) => c.id === challengeId);
+    const targetChallenge = progression.challenges.find((c) => c.id === challengeId || c.id === chal.id);
 
     // If challenge was completed historically, always allow viewing
-    const teamChal = await teamChallengeRepository.getTeamChallenge(teamId, challengeId);
+    const teamChal = await teamChallengeRepository.getTeamChallenge(teamId, chal.id);
     const isCompleted = teamChal?.status === 'COMPLETED';
 
     if (!isCompleted) {
@@ -302,7 +302,7 @@ export class ProgressionService {
     }
 
     // Fetch public test cases ONLY (strictly exclude hidden tests)
-    const publicTestCases = await challengeRepository.getTestCases(challengeId, false);
+    const publicTestCases = await challengeRepository.getTestCases(chal.id, false);
 
     // 2. Strict transformation to ParticipantChallengeDTO with anti-leak assertion
     return toParticipantChallengeDTO({

@@ -31,6 +31,7 @@ import {
 } from '../../src/db/schema.ts';
 import { teamRealtimeService } from '../services/teamRealtimeService.ts';
 import { leaderboardRealtimeService } from '../services/leaderboardRealtimeService.ts';
+import { presenceService } from '../services/presenceService.ts';
 import { eventRepository } from './eventRepository.ts';
 
 export interface AdminUserRecord {
@@ -1197,6 +1198,7 @@ export class AdminRepository {
             completedBySessionId: tc.completedBySessionId,
           });
         }
+        presenceService.onMatchEnded(currentMatchNum);
       }
     } catch (syncErr) {
       console.warn('Warning during competition match state sync:', syncErr);
@@ -1400,6 +1402,7 @@ export class AdminRepository {
 
         // 6. Broadcast Realtime Notifications across Arena & Live Scoreboard
         try {
+          presenceService.onMatchChange(nextMatchNumber);
           teamRealtimeService.broadcastGlobal('event.status.changed', {
             status: 'NOT_STARTED',
             matchNumber: nextMatchNumber,

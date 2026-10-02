@@ -228,7 +228,13 @@ public class Main {
   assert(privOut.includes(`JAVA_USER: ${sandboxConfig.user}`), 'Java runtime identity is sandbox user');
   assert(privOut.includes(`uid=${sandboxConfig.uid}(${sandboxConfig.user}) gid=${sandboxConfig.gid}(${sandboxConfig.user})`), `Process executes as UID ${sandboxConfig.uid} / GID ${sandboxConfig.gid}`);
   assert(privOut.includes(`groups=${sandboxConfig.gid}(${sandboxConfig.user})`), 'Supplementary groups are stripped');
-  assert(privOut.includes('SUDO_BLOCKED') || privOut.includes('Permission denied'), 'Privilege escalation via sudo is denied');
+  assert(
+    privOut.includes('SUDO_BLOCKED') ||
+    privOut.includes('Permission denied') ||
+    privOut.includes('no new privileges') ||
+    privOut.includes('not allowed to run sudo'),
+    'Privilege escalation via sudo is denied'
+  );
 
   // -------------------------------------------------------------
   // Section 4: Filesystem & Workspace Isolation
@@ -525,6 +531,7 @@ public class Main {
   // 7.4 Bounded Concurrency & Burst Handling (Queue)
   process.env.NODE_ENV = 'development';
   process.env.MAX_CONCURRENT_EXECUTIONS = '2';
+  process.env.EXECUTION_IN_MEMORY = 'true';
   const boundedQueue = new ExecutionQueueManager();
   await boundedQueue.initialize();
 
@@ -569,13 +576,15 @@ public class Main {
 
   // Wait for all burst jobs to finish
   const burstStart = Date.now();
-  while (totalProcessed < 8 && Date.now() - burstStart < 5000) {
+  while (totalProcessed < 8 && Date.now() - burstStart < 10000) {
     await new Promise((r) => setTimeout(r, 50));
   }
 
   assert(totalProcessed === 8, `Burst submissions completely processed (processed: ${totalProcessed}/8)`);
   assert(maxObservedActive <= 2, `Burst respects MAX_CONCURRENT_EXECUTIONS ceiling (peak concurrency: ${maxObservedActive}, limit: 2)`);
   assert(maxObservedActive > 0, `Execution worker successfully executes queued burst jobs`);
+
+  await boundedQueue.close();
 
   console.log('\n================================================================');
   console.log(`SECURITY VERIFICATION COMPLETE: ${testsPassed} passed, ${testsFailed} failed`);

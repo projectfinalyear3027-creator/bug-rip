@@ -23,6 +23,7 @@
  */
 
 process.env.PG_MEM = 'true';
+process.env.SEED_TEST_FIXTURES = 'true';
 
 import { db } from '../src/db/index.ts';
 import { runMigrations } from '../database/migrator.ts';
@@ -302,6 +303,7 @@ async function runFragment12Tests() {
   if (testsFailed > 0) {
     process.exit(1);
   }
+  process.exit(0);
 }
 
 runFragment12Tests().catch((err) => {

@@ -10,6 +10,7 @@ import { teamRepository } from '../repositories/teamRepository.ts';
 import { progressionService } from './progressionService.ts';
 import { leaderboardRealtimeService } from './leaderboardRealtimeService.ts';
 import { antiCheatService } from './antiCheatService.ts';
+import { presenceService } from './presenceService.ts';
 import { AppError } from '../middleware/errorHandler.ts';
 
 export interface AuthoritativeEventStatus {
@@ -273,19 +274,38 @@ export class EventService {
   /**
    * Get Sanitized Public Leaderboard for /live auditorium and projector display.
    * Strips all internal identifiers, tokens, credentials, and sensitive fields.
+   * Annotates real-time authoritative presence and supports Live Score presentation ordering.
    */
-  async getPublicLeaderboard() {
+  async getPublicLeaderboard(options?: { matchNumber?: number; liveScoreOrdering?: boolean; isArchived?: boolean }) {
     const raw = await eventRepository.getLeaderboard();
-    return raw.map((entry) => ({
-      rank: entry.rank,
-      participantName: (entry as any).participantName || entry.teamName,
-      teamName: entry.teamName || (entry as any).participantName,
-      connectedMembers: entry.connectedMemberCount,
-      registeredMembers: entry.registeredMemberCount,
-      problemsSolved: entry.problemsSolved,
-      score: entry.score,
-      lastSolveTimestamp: entry.lastSolveTimestamp,
-    }));
+    const eventStatus = await this.getEventStatus();
+    const matchNum = options?.matchNumber ?? eventStatus.currentMatchNumber;
+    const isLiveMatch = matchNum === eventStatus.currentMatchNumber;
+    const isEnded = eventStatus.status === 'ENDED';
+    const isArchived = Boolean(options?.isArchived);
+
+    const list = raw.map((entry) => {
+      const pId = entry.participantId || entry.teamId;
+      // When match ends, participants should no longer be considered actively ONLINE for that competition
+      const isOnline = isLiveMatch && !isEnded && !isArchived && presenceService.isParticipantOnline(pId, matchNum);
+      return {
+        rank: entry.rank,
+        participantName: (entry as any).participantName || entry.teamName,
+        teamName: entry.teamName || (entry as any).participantName,
+        isOnline,
+        connectedMembers: isOnline ? 1 : 0,
+        registeredMembers: entry.registeredMemberCount,
+        problemsSolved: entry.problemsSolved,
+        score: entry.score,
+        lastSolveTimestamp: entry.lastSolveTimestamp,
+      };
+    });
+
+    if (options?.liveScoreOrdering && !isArchived) {
+      return presenceService.applyLiveScoreboardOrdering(list, matchNum, false);
+    }
+
+    return list;
   }
 }
 

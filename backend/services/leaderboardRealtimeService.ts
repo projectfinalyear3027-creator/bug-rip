@@ -15,6 +15,8 @@ import { eventService } from './eventService.ts';
 export interface PublicLeaderboardRow {
   rank: number;
   teamName: string;
+  participantName?: string;
+  isOnline?: boolean;
   connectedMembers: number;
   registeredMembers: number;
   problemsSolved: number;

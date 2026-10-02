@@ -321,6 +321,7 @@ async function runNewMatchTests() {
   if (testsFailed > 0) {
     process.exit(1);
   }
+  process.exit(0);
 }
 
 runNewMatchTests().catch((err) => {

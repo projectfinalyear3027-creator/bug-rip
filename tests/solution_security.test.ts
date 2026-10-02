@@ -178,6 +178,7 @@ async function runSolutionSecurityTestSuite() {
   if (testsFailed > 0) {
     process.exit(1);
   }
+  process.exit(0);
 }
 
 runSolutionSecurityTestSuite().catch((err) => {

@@ -243,7 +243,8 @@ export class ChallengeRepository {
    * Prohibits selecting solution_code, admin_notes, hidden tests, or flags.
    */
   async getParticipantChallengeById(challengeId: string) {
-    const res = await db
+    const cleanId = (challengeId || '').trim();
+    let res = await db
       .select({
         id: challenges.id,
         roundId: challenges.roundId,
@@ -261,8 +262,34 @@ export class ChallengeRepository {
         isActive: challenges.isActive,
       })
       .from(challenges)
-      .where(and(eq(challenges.id, challengeId), eq(challenges.isActive, true)))
+      .where(and(eq(challenges.id, cleanId), eq(challenges.isActive, true)))
       .limit(1);
+
+    if (!res[0]) {
+      const prefixMatch = cleanId.match(/^(EASY-\d{2}|MEDIUM-\d{2}|HARD-\d{2}|EXTREME-\d{2})/i);
+      if (prefixMatch) {
+        res = await db
+          .select({
+            id: challenges.id,
+            roundId: challenges.roundId,
+            title: challenges.title,
+            slug: challenges.slug,
+            description: challenges.description,
+            starterCode: challenges.starterCode,
+            score: challenges.score,
+            displayOrder: challenges.displayOrder,
+            validationType: challenges.validationType,
+            timeLimitMs: challenges.timeLimitMs,
+            memoryLimitMb: challenges.memoryLimitMb,
+            maxOutputBytes: challenges.maxOutputBytes,
+            maxSourceBytes: challenges.maxSourceBytes,
+            isActive: challenges.isActive,
+          })
+          .from(challenges)
+          .where(and(eq(challenges.id, prefixMatch[1].toUpperCase()), eq(challenges.isActive, true)))
+          .limit(1);
+      }
+    }
 
     return res[0] || null;
   }
@@ -271,11 +298,23 @@ export class ChallengeRepository {
    * Get challenge by ID (Internal / Admin use only)
    */
   async getChallengeById(challengeId: string) {
-    const res = await db
+    const cleanId = (challengeId || '').trim();
+    let res = await db
       .select()
       .from(challenges)
-      .where(eq(challenges.id, challengeId))
+      .where(eq(challenges.id, cleanId))
       .limit(1);
+
+    if (!res[0]) {
+      const prefixMatch = cleanId.match(/^(EASY-\d{2}|MEDIUM-\d{2}|HARD-\d{2}|EXTREME-\d{2})/i);
+      if (prefixMatch) {
+        res = await db
+          .select()
+          .from(challenges)
+          .where(eq(challenges.id, prefixMatch[1].toUpperCase()))
+          .limit(1);
+      }
+    }
 
     return res[0] || null;
   }

@@ -2,544 +2,695 @@ import { ChallengeDef } from './types.ts';
 
 export const EASY_CHALLENGES: ChallengeDef[] = [
   {
-    id: 'EASY-01-FACTORIAL',
+    id: 'EASY-01',
     roundSlug: 'easy',
     difficulty: 'EASY',
-    title: 'Off-By-One Factorial',
-    slug: 'off-by-one-factorial',
-    description: 'Fix the off-by-one boundary defect in factorial calculation so 5! and 10! compute correctly and unlock the flag.',
+    title: 'Sum of Even Numbers',
+    slug: 'sum-of-even-numbers',
+    description: 'Read n integers and compute the sum of all even numbers. Fix the for-loop boundary defect that processes n + 1 values instead of exactly n to unlock the flag.',
     starterCode: `public class Main {
-    public static long factorial(int n) {
-        if (n <= 1) return 1;
-        long result = 1;
-        for (int i = 2; i < n; i++) {
-            result *= i;
+    public static int sumEvenNumbers(int[] numbers) {
+        if (numbers == null || numbers.length == 0) return 0;
+        int sum = 0;
+        // Primary Bug: loop condition processes n + 1 values (<= instead of <)
+        for (int i = 0; i <= numbers.length; i++) {
+            if (numbers[i] % 2 == 0) {
+                sum += numbers[i];
+            }
         }
-        return result;
+        return sum;
     }
 
     public static void main(String[] args) {
-        long f5 = factorial(5);
-        long f10 = factorial(10);
-        System.out.println("Computed 5!: " + f5);
-        System.out.println("Computed 10!: " + f10);
+        try {
+            int t1 = sumEvenNumbers(new int[]{1, 2, 3, 4, 5, 6});
+            int t2 = sumEvenNumbers(new int[]{7, 11, 13});
+            int t3 = sumEvenNumbers(new int[]{2, 4, 8});
+            int t4 = sumEvenNumbers(new int[]{-4, -2, 1, 3});
 
-        if (f5 == 120L && f10 == 3628800L) {
-            long key = (f5 * 6) + 9;
-            System.out.println("FLAG REVEALED: DBG{FACTORIAL_" + key + "X}");
-        } else {
-            System.out.println("Tests failed. Keep debugging to unlock flag.");
+            System.out.println("Test 1 Result: " + t1);
+            System.out.println("Test 2 Result: " + t2);
+            System.out.println("Test 3 Result: " + t3);
+            System.out.println("Test 4 Result: " + t4);
+
+            if (t1 == 12 && t2 == 0 && t3 == 14 && t4 == -6) {
+                System.out.println("FLAG REVEALED: DBG{EVEN_SUM_6201A}");
+            } else {
+                System.out.println("Tests failed. Keep debugging to unlock flag.");
+            }
+        } catch (Exception e) {
+            System.out.println("Tests failed with exception: " + e.getClass().getSimpleName());
         }
     }
 }`,
     solutionCode: `public class Main {
-    public static long factorial(int n) {
-        if (n <= 1) return 1;
-        long result = 1;
-        for (int i = 2; i <= n; i++) {
-            result *= i;
+    public static int sumEvenNumbers(int[] numbers) {
+        if (numbers == null || numbers.length == 0) return 0;
+        int sum = 0;
+        for (int i = 0; i < numbers.length; i++) {
+            if (numbers[i] % 2 == 0) {
+                sum += numbers[i];
+            }
         }
-        return result;
+        return sum;
     }
 
     public static void main(String[] args) {
-        long f5 = factorial(5);
-        long f10 = factorial(10);
-        System.out.println("Computed 5!: " + f5);
-        System.out.println("Computed 10!: " + f10);
+        try {
+            int t1 = sumEvenNumbers(new int[]{1, 2, 3, 4, 5, 6});
+            int t2 = sumEvenNumbers(new int[]{7, 11, 13});
+            int t3 = sumEvenNumbers(new int[]{2, 4, 8});
+            int t4 = sumEvenNumbers(new int[]{-4, -2, 1, 3});
 
-        if (f5 == 120L && f10 == 3628800L) {
-            long key = (f5 * 6) + 9;
-            System.out.println("FLAG REVEALED: DBG{FACTORIAL_" + key + "X}");
-        } else {
-            System.out.println("Tests failed. Keep debugging to unlock flag.");
+            System.out.println("Test 1 Result: " + t1);
+            System.out.println("Test 2 Result: " + t2);
+            System.out.println("Test 3 Result: " + t3);
+            System.out.println("Test 4 Result: " + t4);
+
+            if (t1 == 12 && t2 == 0 && t3 == 14 && t4 == -6) {
+                System.out.println("FLAG REVEALED: DBG{EVEN_SUM_6201A}");
+            } else {
+                System.out.println("Tests failed. Keep debugging to unlock flag.");
+            }
+        } catch (Exception e) {
+            System.out.println("Tests failed with exception: " + e.getClass().getSimpleName());
         }
     }
 }`,
-    adminNotes: 'Off-by-one loop boundary defect: loop terminated at i < n instead of i <= n.',
+    adminNotes: 'Loop boundary off-by-one: loop index ran i <= numbers.length causing ArrayIndexOutOfBoundsException.',
     score: 10,
     displayOrder: 1,
     validationType: 'EXACT_OUTPUT',
-    flag: 'DBG{FACTORIAL_729X}',
+    flag: 'DBG{EVEN_SUM_6201A}',
     publicTestCases: [
-      { inputData: '5', expectedOutput: 'Computed 5!: 120', explanation: 'Standard positive integer (5! = 120)' },
-      { inputData: '1', expectedOutput: 'Computed 1!: 1', explanation: 'Base case for unit factorial (1! = 1)' },
-      { inputData: '7', expectedOutput: 'Computed 7!: 5040', explanation: 'Higher positive integer factorial (7! = 5040)' },
+      { inputData: '1 2 3 4 5 6', expectedOutput: 'Test 1 Result: 12', explanation: 'Mixed even and odd integers (2 + 4 + 6 = 12)' },
+      { inputData: '7 11 13', expectedOutput: 'Test 2 Result: 0', explanation: 'All odd integers yield sum of 0' },
+      { inputData: '2 4 8', expectedOutput: 'Test 3 Result: 14', explanation: 'All even integers (2 + 4 + 8 = 14)' },
     ],
     hiddenTestCases: [
-      { inputData: '0', expectedOutput: 'Computed 0!: 1' },
-      { inputData: '10', expectedOutput: 'Computed 10!: 3628800' },
-      { inputData: '12', expectedOutput: 'Computed 12!: 479001600' },
+      { inputData: '-4 -2 1 3', expectedOutput: 'Test 4 Result: -6' },
+      { inputData: '0', expectedOutput: '0' },
+      { inputData: '100 200 301', expectedOutput: '300' },
     ],
   },
   {
-    id: 'EASY-02-PALINDROME',
+    id: 'EASY-02',
     roundSlug: 'easy',
     difficulty: 'EASY',
-    title: 'Case-Sensitive Palindrome Inversion',
-    slug: 'palindrome-inversion',
-    description: 'Ensure String palindrome verification ignores alphanumeric casing and whitespace to unlock the flag.',
+    title: 'Find the Largest Number',
+    slug: 'find-the-largest-number',
+    description: 'Read n integers and find the largest value. Fix the inverted comparison condition that picks the smallest number instead of the largest to unlock the flag.',
     starterCode: `public class Main {
-    public static boolean isPalindrome(String s) {
-        String clean = s.replaceAll("[^a-zA-Z0-9]", "");
-        return clean.equals(new StringBuilder(clean).reverse().toString());
+    public static int findLargest(int[] arr) {
+        if (arr == null || arr.length == 0) return 0;
+        int largest = arr[0];
+        for (int i = 1; i < arr.length; i++) {
+            // Primary Bug: comparison operator is inverted (< instead of >)
+            if (arr[i] < largest) {
+                largest = arr[i];
+            }
+        }
+        return largest;
     }
 
     public static void main(String[] args) {
-        boolean t1 = isPalindrome("A man, a plan, a canal: Panama");
-        boolean t2 = isPalindrome("race a car");
-        System.out.println("Test 1: " + t1);
-        System.out.println("Test 2: " + t2);
+        int m1 = findLargest(new int[]{3, 7, 2, 9, 5});
+        int m2 = findLargest(new int[]{-10, -3, -50, -1});
+        int m3 = findLargest(new int[]{42});
 
-        if (t1 && !t2) {
-            char[] code = new char[]{'9', '9', '2', '1', 'K'};
-            System.out.println("FLAG REVEALED: DBG{PALINDROME_" + new String(code) + "}");
+        System.out.println("Largest 1: " + m1);
+        System.out.println("Largest 2: " + m2);
+        System.out.println("Largest 3: " + m3);
+
+        if (m1 == 9 && m2 == -1 && m3 == 42) {
+            System.out.println("FLAG REVEALED: DBG{LARGEST_NUM_4819B}");
         } else {
             System.out.println("Tests failed. Keep debugging to unlock flag.");
         }
     }
 }`,
     solutionCode: `public class Main {
-    public static boolean isPalindrome(String s) {
-        String clean = s.replaceAll("[^a-zA-Z0-9]", "").toLowerCase();
-        return clean.equals(new StringBuilder(clean).reverse().toString());
+    public static int findLargest(int[] arr) {
+        if (arr == null || arr.length == 0) return 0;
+        int largest = arr[0];
+        for (int i = 1; i < arr.length; i++) {
+            if (arr[i] > largest) {
+                largest = arr[i];
+            }
+        }
+        return largest;
     }
 
     public static void main(String[] args) {
-        boolean t1 = isPalindrome("A man, a plan, a canal: Panama");
-        boolean t2 = isPalindrome("race a car");
-        System.out.println("Test 1: " + t1);
-        System.out.println("Test 2: " + t2);
+        int m1 = findLargest(new int[]{3, 7, 2, 9, 5});
+        int m2 = findLargest(new int[]{-10, -3, -50, -1});
+        int m3 = findLargest(new int[]{42});
 
-        if (t1 && !t2) {
-            char[] code = new char[]{'9', '9', '2', '1', 'K'};
-            System.out.println("FLAG REVEALED: DBG{PALINDROME_" + new String(code) + "}");
+        System.out.println("Largest 1: " + m1);
+        System.out.println("Largest 2: " + m2);
+        System.out.println("Largest 3: " + m3);
+
+        if (m1 == 9 && m2 == -1 && m3 == 42) {
+            System.out.println("FLAG REVEALED: DBG{LARGEST_NUM_4819B}");
         } else {
             System.out.println("Tests failed. Keep debugging to unlock flag.");
         }
     }
 }`,
-    adminNotes: 'Missing case normalization: cleaned string was not converted to lower case.',
+    adminNotes: 'Comparison condition was inverted from > to <, finding the minimum instead of maximum.',
     score: 10,
     displayOrder: 2,
     validationType: 'EXACT_OUTPUT',
-    flag: 'DBG{PALINDROME_9921K}',
+    flag: 'DBG{LARGEST_NUM_4819B}',
     publicTestCases: [
-      { inputData: 'A man, a plan, a canal: Panama', expectedOutput: 'Test 1: true', explanation: 'Mixed-case alphanumeric palindrome' },
-      { inputData: 'race a car', expectedOutput: 'Test 2: false', explanation: 'Standard non-palindrome string' },
-      { inputData: 'Was it a car or a cat I saw?', expectedOutput: 'Test 3: true', explanation: 'Sentence with punctuation and casing' },
+      { inputData: '3 7 2 9 5', expectedOutput: 'Largest 1: 9', explanation: 'Array with positive numbers, 9 is largest' },
+      { inputData: '-10 -3 -50 -1', expectedOutput: 'Largest 2: -1', explanation: 'Array with negative numbers, -1 is largest' },
+      { inputData: '42', expectedOutput: 'Largest 3: 42', explanation: 'Single element array' },
     ],
     hiddenTestCases: [
-      { inputData: "No 'x' in Nixon", expectedOutput: 'Test hidden 1: true' },
-      { inputData: 'Hello, World!', expectedOutput: 'Test hidden 2: false' },
-      { inputData: '12321', expectedOutput: 'Test hidden 3: true' },
+      { inputData: '100 20 500 40', expectedOutput: '500' },
+      { inputData: '-5 -5 -5', expectedOutput: '-5' },
+      { inputData: '0 -10 -20', expectedOutput: '0' },
     ],
   },
   {
-    id: 'EASY-03-ARRAY-SUM',
+    id: 'EASY-03',
     roundSlug: 'easy',
     difficulty: 'EASY',
-    title: 'Accumulator Arithmetic Type Truncation',
-    slug: 'accumulator-truncation',
-    description: 'Fix the integer overflow in running sum calculations over large arrays.',
+    title: 'Count Positive Numbers',
+    slug: 'count-positive-numbers',
+    description: 'Count how many integers in an array are strictly greater than zero. Fix the inverted condition that counts negative numbers instead of positive numbers to unlock the flag.',
     starterCode: `public class Main {
-    public static long sumArray(int[] arr) {
-        int total = 0;
-        for (int v : arr) {
-            total += v;
+    public static int countPositive(int[] arr) {
+        if (arr == null) return 0;
+        int count = 0;
+        for (int x : arr) {
+            // Primary Bug: condition checks for x < 0 instead of x > 0
+            if (x < 0) {
+                count++;
+            }
         }
-        return total;
+        return count;
     }
 
     public static void main(String[] args) {
-        int[] data = { 1000000000, 1000000000, 1000000000 };
-        long res = sumArray(data);
-        System.out.println("Sum result: " + res);
-        if (res == 3000000000L) {
-            System.out.println("FLAG REVEALED: DBG{SUM_ACCUMULATE_8812A}");
+        int c1 = countPositive(new int[]{4, -2, 0, 7, -9, 3});
+        int c2 = countPositive(new int[]{-1, -2, -3});
+        int c3 = countPositive(new int[]{0, 0, 0});
+
+        System.out.println("Count 1: " + c1);
+        System.out.println("Count 2: " + c2);
+        System.out.println("Count 3: " + c3);
+
+        if (c1 == 3 && c2 == 0 && c3 == 0) {
+            System.out.println("FLAG REVEALED: DBG{POS_COUNT_7392C}");
         } else {
-            System.out.println("Tests failed. Integer overflow detected in accumulator.");
+            System.out.println("Tests failed. Keep debugging to unlock flag.");
         }
     }
 }`,
     solutionCode: `public class Main {
-    public static long sumArray(int[] arr) {
-        long total = 0L;
-        for (int v : arr) {
-            total += v;
+    public static int countPositive(int[] arr) {
+        if (arr == null) return 0;
+        int count = 0;
+        for (int x : arr) {
+            if (x > 0) {
+                count++;
+            }
         }
-        return total;
+        return count;
     }
 
     public static void main(String[] args) {
-        int[] data = { 1000000000, 1000000000, 1000000000 };
-        long res = sumArray(data);
-        System.out.println("Sum result: " + res);
-        if (res == 3000000000L) {
-            System.out.println("FLAG REVEALED: DBG{SUM_ACCUMULATE_8812A}");
+        int c1 = countPositive(new int[]{4, -2, 0, 7, -9, 3});
+        int c2 = countPositive(new int[]{-1, -2, -3});
+        int c3 = countPositive(new int[]{0, 0, 0});
+
+        System.out.println("Count 1: " + c1);
+        System.out.println("Count 2: " + c2);
+        System.out.println("Count 3: " + c3);
+
+        if (c1 == 3 && c2 == 0 && c3 == 0) {
+            System.out.println("FLAG REVEALED: DBG{POS_COUNT_7392C}");
         } else {
-            System.out.println("Tests failed. Integer overflow detected in accumulator.");
+            System.out.println("Tests failed. Keep debugging to unlock flag.");
         }
     }
 }`,
-    adminNotes: 'Accumulator was 32-bit int causing overflow beyond 2.14 billion; fix with long accumulator.',
+    adminNotes: 'Condition checked x < 0 instead of x > 0.',
     score: 10,
     displayOrder: 3,
     validationType: 'EXACT_OUTPUT',
-    flag: 'DBG{SUM_ACCUMULATE_8812A}',
+    flag: 'DBG{POS_COUNT_7392C}',
     publicTestCases: [
-      { inputData: '[1000000000, 1000000000, 1000000000]', expectedOutput: 'Sum result: 3000000000', explanation: 'Three billion sum exceeding 32-bit integer limits' },
-      { inputData: '[10, 20, 30]', expectedOutput: 'Sum result: 60', explanation: 'Small positive integer sum' },
-      { inputData: '[-5, 5]', expectedOutput: 'Sum result: 0', explanation: 'Canceling positive and negative values' },
+      { inputData: '4 -2 0 7 -9 3', expectedOutput: 'Count 1: 3', explanation: 'Positive numbers are 4, 7, 3 (total: 3)' },
+      { inputData: '-1 -2 -3', expectedOutput: 'Count 2: 0', explanation: 'All negative numbers, count is 0' },
+      { inputData: '0 0 0', expectedOutput: 'Count 3: 0', explanation: 'Zero is neither positive nor negative' },
     ],
     hiddenTestCases: [
-      { inputData: '[2147483647, 1]', expectedOutput: 'Sum result: 2147483648' },
-      { inputData: '[]', expectedOutput: 'Sum result: 0' },
+      { inputData: '1 2 3 4 5', expectedOutput: '5' },
+      { inputData: '-10 10', expectedOutput: '1' },
+      { inputData: '100', expectedOutput: '1' },
     ],
   },
   {
-    id: 'EASY-04-VOWEL-REVERSE',
+    id: 'EASY-04',
     roundSlug: 'easy',
     difficulty: 'EASY',
-    title: 'Vowel Reversal Two-Pointer Boundary',
-    slug: 'vowel-reversal-index',
-    description: 'Reverse only the vowels of a string without corrupting consonants or boundary pointers.',
+    title: 'Reverse a Number',
+    slug: 'reverse-a-number',
+    description: 'Reverse the digits of an integer. Fix the accumulation defect where the remaining number was appended instead of the extracted digit to unlock the flag.',
     starterCode: `public class Main {
-    public static String reverseVowels(String s) {
-        char[] chars = s.toCharArray();
-        String vowels = "aeiouAEIOU";
-        int i = 0, j = chars.length - 1;
-        while (i < j) {
-            while (i < j && vowels.indexOf(chars[i]) == -1) i++;
-            while (i < j && vowels.indexOf(chars[j]) == -1) j--;
-            char tmp = chars[i];
-            chars[i] = chars[j];
-            chars[j] = tmp;
-            // Missing inner pointer movements causes infinite loop or duplicate swap
+    public static int reverseNumber(int n) {
+        int reversed = 0;
+        int num = Math.abs(n);
+        while (num > 0) {
+            int digit = num % 10;
+            // Primary Bug: appends num instead of digit
+            reversed = reversed * 10 + num;
+            num /= 10;
         }
-        return new String(chars);
+        return n < 0 ? -reversed : reversed;
     }
 
     public static void main(String[] args) {
-        String out = reverseVowels("hello");
-        System.out.println("Reversed: " + out);
-        if ("holle".equals(out)) {
-            System.out.println("FLAG REVEALED: DBG{VOWEL_REVERSAL_3194B}");
+        int r1 = reverseNumber(12345);
+        int r2 = reverseNumber(-987);
+        int r3 = reverseNumber(100);
+
+        System.out.println("Reversed 1: " + r1);
+        System.out.println("Reversed 2: " + r2);
+        System.out.println("Reversed 3: " + r3);
+
+        if (r1 == 54321 && r2 == -789 && r3 == 1) {
+            System.out.println("FLAG REVEALED: DBG{REV_NUM_1948D}");
         } else {
-            System.out.println("Tests failed. Keep debugging vowel reversal.");
+            System.out.println("Tests failed. Keep debugging to unlock flag.");
         }
     }
 }`,
     solutionCode: `public class Main {
-    public static String reverseVowels(String s) {
-        char[] chars = s.toCharArray();
-        String vowels = "aeiouAEIOU";
-        int i = 0, j = chars.length - 1;
-        while (i < j) {
-            while (i < j && vowels.indexOf(chars[i]) == -1) i++;
-            while (i < j && vowels.indexOf(chars[j]) == -1) j--;
-            char tmp = chars[i];
-            chars[i] = chars[j];
-            chars[j] = tmp;
-            i++;
-            j--;
+    public static int reverseNumber(int n) {
+        int reversed = 0;
+        int num = Math.abs(n);
+        while (num > 0) {
+            int digit = num % 10;
+            reversed = reversed * 10 + digit;
+            num /= 10;
         }
-        return new String(chars);
+        return n < 0 ? -reversed : reversed;
     }
 
     public static void main(String[] args) {
-        String out = reverseVowels("hello");
-        System.out.println("Reversed: " + out);
-        if ("holle".equals(out)) {
-            System.out.println("FLAG REVEALED: DBG{VOWEL_REVERSAL_3194B}");
+        int r1 = reverseNumber(12345);
+        int r2 = reverseNumber(-987);
+        int r3 = reverseNumber(100);
+
+        System.out.println("Reversed 1: " + r1);
+        System.out.println("Reversed 2: " + r2);
+        System.out.println("Reversed 3: " + r3);
+
+        if (r1 == 54321 && r2 == -789 && r3 == 1) {
+            System.out.println("FLAG REVEALED: DBG{REV_NUM_1948D}");
         } else {
-            System.out.println("Tests failed. Keep debugging vowel reversal.");
+            System.out.println("Tests failed. Keep debugging to unlock flag.");
         }
     }
 }`,
-    adminNotes: 'Pointers i and j were not incremented/decremented after swapping, resulting in infinite iteration.',
+    adminNotes: 'Reversal math appended num rather than extracted digit.',
     score: 10,
     displayOrder: 4,
     validationType: 'EXACT_OUTPUT',
-    flag: 'DBG{VOWEL_REVERSAL_3194B}',
+    flag: 'DBG{REV_NUM_1948D}',
     publicTestCases: [
-      { inputData: 'hello', expectedOutput: 'Reversed: holle', explanation: 'Swaps e and o' },
-      { inputData: 'leetcode', expectedOutput: 'Reversed: leotcede', explanation: 'Multiple vowel swapping' },
-      { inputData: 'xyz', expectedOutput: 'Reversed: xyz', explanation: 'No vowels present in string' },
+      { inputData: '12345', expectedOutput: 'Reversed 1: 54321', explanation: 'Digits reversed 12345 -> 54321' },
+      { inputData: '-987', expectedOutput: 'Reversed 2: -789', explanation: 'Negative number preservation -987 -> -789' },
+      { inputData: '100', expectedOutput: 'Reversed 3: 1', explanation: 'Trailing zeroes stripped upon reversal 100 -> 1' },
     ],
     hiddenTestCases: [
-      { inputData: 'aA', expectedOutput: 'Reversed: Aa' },
-      { inputData: 'racecar', expectedOutput: 'Reversed: racecar' },
+      { inputData: '7', expectedOutput: '7' },
+      { inputData: '405', expectedOutput: '504' },
+      { inputData: '-120', expectedOutput: '-21' },
     ],
   },
   {
-    id: 'EASY-05-LEAP-YEAR',
+    id: 'EASY-05',
     roundSlug: 'easy',
     difficulty: 'EASY',
-    title: 'Gregorian Leap Year Century Rule',
-    slug: 'leap-year-century',
-    description: 'Fix the leap year algorithm so that century years divisible by 100 but not 400 are correctly classified.',
+    title: 'Count Vowels',
+    slug: 'count-vowels',
+    description: 'Count the number of vowels (a, e, i, o, u) in a lowercase string. Fix the vowel condition check where an invalid character was checked instead of "u" to unlock the flag.',
     starterCode: `public class Main {
-    public static boolean isLeapYear(int year) {
-        // Defect: missed the century non-leap condition
-        return year % 4 == 0;
+    public static int countVowels(String s) {
+        if (s == null) return 0;
+        int count = 0;
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            // Primary Bug: 'y' is tested instead of 'u'
+            if (c == 'a' || c == 'e' || c == 'i' || c == 'o' || c == 'y') {
+                count++;
+            }
+        }
+        return count;
     }
 
     public static void main(String[] args) {
-        boolean y1900 = isLeapYear(1900);
-        boolean y2000 = isLeapYear(2000);
-        boolean y2024 = isLeapYear(2024);
-        System.out.println("1900: " + y1900 + ", 2000: " + y2000 + ", 2024: " + y2024);
-        if (!y1900 && y2000 && y2024) {
-            System.out.println("FLAG REVEALED: DBG{LEAP_CENTURY_6711C}");
+        int v1 = countVowels("education");
+        int v2 = countVowels("sky rhythm");
+        int v3 = countVowels("algorithm");
+
+        System.out.println("Vowels in education: " + v1);
+        System.out.println("Vowels in sky rhythm: " + v2);
+        System.out.println("Vowels in algorithm: " + v3);
+
+        if (v1 == 5 && v2 == 0 && v3 == 3) {
+            System.out.println("FLAG REVEALED: DBG{VOWEL_SCAN_8820E}");
         } else {
-            System.out.println("Tests failed. Century leap rule defect present.");
+            System.out.println("Tests failed. Keep debugging to unlock flag.");
         }
     }
 }`,
     solutionCode: `public class Main {
-    public static boolean isLeapYear(int year) {
-        return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+    public static int countVowels(String s) {
+        if (s == null) return 0;
+        int count = 0;
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c == 'a' || c == 'e' || c == 'i' || c == 'o' || c == 'u') {
+                count++;
+            }
+        }
+        return count;
     }
 
     public static void main(String[] args) {
-        boolean y1900 = isLeapYear(1900);
-        boolean y2000 = isLeapYear(2000);
-        boolean y2024 = isLeapYear(2024);
-        System.out.println("1900: " + y1900 + ", 2000: " + y2000 + ", 2024: " + y2024);
-        if (!y1900 && y2000 && y2024) {
-            System.out.println("FLAG REVEALED: DBG{LEAP_CENTURY_6711C}");
+        int v1 = countVowels("education");
+        int v2 = countVowels("sky rhythm");
+        int v3 = countVowels("algorithm");
+
+        System.out.println("Vowels in education: " + v1);
+        System.out.println("Vowels in sky rhythm: " + v2);
+        System.out.println("Vowels in algorithm: " + v3);
+
+        if (v1 == 5 && v2 == 0 && v3 == 3) {
+            System.out.println("FLAG REVEALED: DBG{VOWEL_SCAN_8820E}");
         } else {
-            System.out.println("Tests failed. Century leap rule defect present.");
+            System.out.println("Tests failed. Keep debugging to unlock flag.");
         }
     }
 }`,
-    adminNotes: 'Years divisible by 100 are not leap years unless divisible by 400.',
+    adminNotes: 'Vowel check included y instead of u.',
     score: 10,
     displayOrder: 5,
     validationType: 'EXACT_OUTPUT',
-    flag: 'DBG{LEAP_CENTURY_6711C}',
+    flag: 'DBG{VOWEL_SCAN_8820E}',
     publicTestCases: [
-      { inputData: '1900, 2000, 2024', expectedOutput: '1900: false, 2000: true, 2024: true', explanation: '1900 is not leap, 2000 is leap, 2024 is standard leap' },
-      { inputData: '2023', expectedOutput: '2023: false', explanation: 'Standard non-leap year' },
-      { inputData: '1600', expectedOutput: '1600: true', explanation: '400-year century leap year' },
+      { inputData: 'education', expectedOutput: 'Vowels in education: 5', explanation: 'Contains e, u, a, i, o (all 5 vowels)' },
+      { inputData: 'sky rhythm', expectedOutput: 'Vowels in sky rhythm: 0', explanation: 'No standard vowels present' },
+      { inputData: 'algorithm', expectedOutput: 'Vowels in algorithm: 3', explanation: 'Contains a, o, i (3 vowels)' },
     ],
     hiddenTestCases: [
-      { inputData: '2100', expectedOutput: '2100: false' },
-      { inputData: '2400', expectedOutput: '2400: true' },
+      { inputData: 'umbrella', expectedOutput: '3' },
+      { inputData: 'crypt', expectedOutput: '0' },
+      { inputData: 'aeiou', expectedOutput: '5' },
     ],
   },
   {
-    id: 'EASY-06-EVEN-ODD',
+    id: 'EASY-06',
     roundSlug: 'easy',
     difficulty: 'EASY',
-    title: 'Negative Modulo Bitwise Parity',
-    slug: 'negative-modulo-parity',
-    description: 'Fix the integer parity checker so negative numbers like -3 are recognized as odd.',
-    starterCode: `public class Main {
-    public static boolean isOdd(int n) {
-        // In Java, -3 % 2 == -1, not 1!
-        return n % 2 == 1;
-    }
-
-    public static void main(String[] args) {
-        boolean p3 = isOdd(3);
-        boolean n3 = isOdd(-3);
-        boolean p4 = isOdd(4);
-        System.out.println("3 is odd: " + p3 + ", -3 is odd: " + n3 + ", 4 is odd: " + p4);
-        if (p3 && n3 && !p4) {
-            System.out.println("FLAG REVEALED: DBG{MODULO_PARITY_4502D}");
-        } else {
-            System.out.println("Tests failed. Negative odd number failed parity check.");
-        }
-    }
-}`,
-    solutionCode: `public class Main {
-    public static boolean isOdd(int n) {
-        return n % 2 != 0;
-    }
-
-    public static void main(String[] args) {
-        boolean p3 = isOdd(3);
-        boolean n3 = isOdd(-3);
-        boolean p4 = isOdd(4);
-        System.out.println("3 is odd: " + p3 + ", -3 is odd: " + n3 + ", 4 is odd: " + p4);
-        if (p3 && n3 && !p4) {
-            System.out.println("FLAG REVEALED: DBG{MODULO_PARITY_4502D}");
-        } else {
-            System.out.println("Tests failed. Negative odd number failed parity check.");
-        }
-    }
-}`,
-    adminNotes: 'Java remainder preserves sign of dividend, so negative odd remainder is -1. Use n % 2 != 0 or (n & 1) != 0.',
-    score: 10,
-    displayOrder: 6,
-    validationType: 'EXACT_OUTPUT',
-    flag: 'DBG{MODULO_PARITY_4502D}',
-    publicTestCases: [
-      { inputData: '3, -3, 4', expectedOutput: '3 is odd: true, -3 is odd: true, 4 is odd: false', explanation: 'Positive and negative odd parity with even rejection' },
-      { inputData: '0', expectedOutput: '0 is odd: false', explanation: 'Zero is even' },
-      { inputData: '-2', expectedOutput: '-2 is odd: false', explanation: 'Negative even number' },
-    ],
-    hiddenTestCases: [
-      { inputData: '-999', expectedOutput: '-999 is odd: true' },
-      { inputData: '1000000', expectedOutput: '1000000 is odd: false' },
-    ],
-  },
-  {
-    id: 'EASY-07-STRING-EQUALS',
-    roundSlug: 'easy',
-    difficulty: 'EASY',
-    title: 'String Reference Equality Trap',
-    slug: 'string-reference-equality',
-    description: 'Fix string equality verification to compare string values rather than heap object identities.',
-    starterCode: `public class Main {
-    public static boolean verifyToken(String userProvided, String expected) {
-        // Bug: using == compares references, failing dynamically generated strings
-        return userProvided == expected;
-    }
-
-    public static void main(String[] args) {
-        String s1 = new String("SNIPER_ACCESS");
-        String s2 = "SNIPER_ACCESS";
-        boolean match = verifyToken(s1, s2);
-        System.out.println("Token verification: " + match);
-        if (match) {
-            System.out.println("FLAG REVEALED: DBG{STRING_EQUALS_9013E}");
-        } else {
-            System.out.println("Tests failed. Reference identity mismatch detected.");
-        }
-    }
-}`,
-    solutionCode: `public class Main {
-    public static boolean verifyToken(String userProvided, String expected) {
-        return userProvided != null && userProvided.equals(expected);
-    }
-
-    public static void main(String[] args) {
-        String s1 = new String("SNIPER_ACCESS");
-        String s2 = "SNIPER_ACCESS";
-        boolean match = verifyToken(s1, s2);
-        System.out.println("Token verification: " + match);
-        if (match) {
-            System.out.println("FLAG REVEALED: DBG{STRING_EQUALS_9013E}");
-        } else {
-            System.out.println("Tests failed. Reference identity mismatch detected.");
-        }
-    }
-}`,
-    adminNotes: 'Using == on Object references compares memory locations instead of string contents.',
-    score: 10,
-    displayOrder: 7,
-    validationType: 'EXACT_OUTPUT',
-    flag: 'DBG{STRING_EQUALS_9013E}',
-    publicTestCases: [
-      { inputData: 'new String("SNIPER_ACCESS"), "SNIPER_ACCESS"', expectedOutput: 'Token verification (match): true', explanation: 'Heap-allocated string compared to literal constant' },
-      { inputData: '"ACCESS", "DENIED"', expectedOutput: 'Token verification (mismatch): false', explanation: 'Distinct strings' },
-      { inputData: 'null, "ACCESS"', expectedOutput: 'Token verification (null): false', explanation: 'Null input safety' },
-    ],
-    hiddenTestCases: [
-      { inputData: '"TOKEN", "TOKEN"', expectedOutput: 'Token verification: true' },
-      { inputData: '"ADMIN", "admin"', expectedOutput: 'Token verification: false' },
-    ],
-  },
-  {
-    id: 'EASY-08-ARRAY-REVERSE',
-    roundSlug: 'easy',
-    difficulty: 'EASY',
-    title: 'In-Place Array Reversal Bounds',
-    slug: 'inplace-array-reversal',
-    description: 'Fix the in-place array reversal loop boundary so elements are not swapped twice back to original positions.',
+    title: 'Multiplication Table',
+    slug: 'multiplication-table',
+    description: 'Compute the first n multiples of x (x*1, x*2, ..., x*n). Fix the loop boundary that stops at n - 1 instead of including n to unlock the flag.',
     starterCode: `import java.util.Arrays;
 
 public class Main {
-    public static void reverse(int[] arr) {
-        int n = arr.length;
-        // Bug: iterating up to n swaps elements back to their initial spots
-        for (int i = 0; i < n; i++) {
-            int temp = arr[i];
-            arr[i] = arr[n - 1 - i];
-            arr[n - 1 - i] = temp;
+    public static int[] getMultiples(int x, int n) {
+        if (n <= 0) return new int[0];
+        int[] result = new int[n];
+        // Primary Bug: stops at n - 1 (i < n instead of i <= n)
+        for (int i = 1; i < n; i++) {
+            result[i - 1] = x * i;
         }
+        return result;
     }
 
     public static void main(String[] args) {
-        int[] arr = { 1, 2, 3, 4, 5 };
-        reverse(arr);
-        System.out.println("Reversed array: " + Arrays.toString(arr));
-        if (Arrays.equals(arr, new int[]{ 5, 4, 3, 2, 1 })) {
-            System.out.println("FLAG REVEALED: DBG{ARRAY_REVERSE_2348F}");
+        int[] m1 = getMultiples(3, 5);
+        int[] m2 = getMultiples(7, 3);
+        int[] m3 = getMultiples(10, 1);
+
+        System.out.println("Multiples 3x5: " + Arrays.toString(m1));
+        System.out.println("Multiples 7x3: " + Arrays.toString(m2));
+        System.out.println("Multiples 10x1: " + Arrays.toString(m3));
+
+        if (Arrays.equals(m1, new int[]{3, 6, 9, 12, 15}) &&
+            Arrays.equals(m2, new int[]{7, 14, 21}) &&
+            Arrays.equals(m3, new int[]{10})) {
+            System.out.println("FLAG REVEALED: DBG{MULT_TABLE_3317F}");
         } else {
-            System.out.println("Tests failed. Double swap resulted in original array.");
+            System.out.println("Tests failed. Keep debugging to unlock flag.");
         }
     }
 }`,
     solutionCode: `import java.util.Arrays;
 
 public class Main {
-    public static void reverse(int[] arr) {
-        int n = arr.length;
-        for (int i = 0; i < n / 2; i++) {
-            int temp = arr[i];
-            arr[i] = arr[n - 1 - i];
-            arr[n - 1 - i] = temp;
+    public static int[] getMultiples(int x, int n) {
+        if (n <= 0) return new int[0];
+        int[] result = new int[n];
+        for (int i = 1; i <= n; i++) {
+            result[i - 1] = x * i;
         }
+        return result;
     }
 
     public static void main(String[] args) {
-        int[] arr = { 1, 2, 3, 4, 5 };
-        reverse(arr);
-        System.out.println("Reversed array: " + Arrays.toString(arr));
-        if (Arrays.equals(arr, new int[]{ 5, 4, 3, 2, 1 })) {
-            System.out.println("FLAG REVEALED: DBG{ARRAY_REVERSE_2348F}");
+        int[] m1 = getMultiples(3, 5);
+        int[] m2 = getMultiples(7, 3);
+        int[] m3 = getMultiples(10, 1);
+
+        System.out.println("Multiples 3x5: " + Arrays.toString(m1));
+        System.out.println("Multiples 7x3: " + Arrays.toString(m2));
+        System.out.println("Multiples 10x1: " + Arrays.toString(m3));
+
+        if (Arrays.equals(m1, new int[]{3, 6, 9, 12, 15}) &&
+            Arrays.equals(m2, new int[]{7, 14, 21}) &&
+            Arrays.equals(m3, new int[]{10})) {
+            System.out.println("FLAG REVEALED: DBG{MULT_TABLE_3317F}");
         } else {
-            System.out.println("Tests failed. Double swap resulted in original array.");
+            System.out.println("Tests failed. Keep debugging to unlock flag.");
         }
     }
 }`,
-    adminNotes: 'Loop ran to n instead of n / 2, undoing each swap during the second half of iteration.',
+    adminNotes: 'Loop stopped at i < n instead of i <= n, leaving final entry 0.',
+    score: 10,
+    displayOrder: 6,
+    validationType: 'EXACT_OUTPUT',
+    flag: 'DBG{MULT_TABLE_3317F}',
+    publicTestCases: [
+      { inputData: '3 5', expectedOutput: 'Multiples 3x5: [3, 6, 9, 12, 15]', explanation: 'First 5 multiples of 3' },
+      { inputData: '7 3', expectedOutput: 'Multiples 7x3: [7, 14, 21]', explanation: 'First 3 multiples of 7' },
+      { inputData: '10 1', expectedOutput: 'Multiples 10x1: [10]', explanation: 'Single multiple of 10' },
+    ],
+    hiddenTestCases: [
+      { inputData: '4 4', expectedOutput: '[4, 8, 12, 16]' },
+      { inputData: '9 2', expectedOutput: '[9, 18]' },
+      { inputData: '2 6', expectedOutput: '[2, 4, 6, 8, 10, 12]' },
+    ],
+  },
+  {
+    id: 'EASY-07',
+    roundSlug: 'easy',
+    difficulty: 'EASY',
+    title: 'Array Average',
+    slug: 'array-average',
+    description: 'Calculate the decimal average of an array of integers as a double. Fix the integer division bug that truncates decimal portions to unlock the flag.',
+    starterCode: `public class Main {
+    public static double calculateAverage(int[] arr) {
+        if (arr == null || arr.length == 0) return 0.0;
+        int sum = 0;
+        for (int x : arr) {
+            sum += x;
+        }
+        // Primary Bug: integer division sum / arr.length truncates fractional average
+        return sum / arr.length;
+    }
+
+    public static void main(String[] args) {
+        double a1 = calculateAverage(new int[]{1, 2});
+        double a2 = calculateAverage(new int[]{10, 20, 30, 40});
+        double a3 = calculateAverage(new int[]{5, 6, 7, 8});
+
+        System.out.printf("Avg 1: %.1f%n", a1);
+        System.out.printf("Avg 2: %.1f%n", a2);
+        System.out.printf("Avg 3: %.1f%n", a3);
+
+        if (Math.abs(a1 - 1.5) < 0.001 && Math.abs(a2 - 25.0) < 0.001 && Math.abs(a3 - 6.5) < 0.001) {
+            System.out.println("FLAG REVEALED: DBG{ARRAY_AVG_9024G}");
+        } else {
+            System.out.println("Tests failed. Keep debugging to unlock flag.");
+        }
+    }
+}`,
+    solutionCode: `public class Main {
+    public static double calculateAverage(int[] arr) {
+        if (arr == null || arr.length == 0) return 0.0;
+        int sum = 0;
+        for (int x : arr) {
+            sum += x;
+        }
+        return (double) sum / arr.length;
+    }
+
+    public static void main(String[] args) {
+        double a1 = calculateAverage(new int[]{1, 2});
+        double a2 = calculateAverage(new int[]{10, 20, 30, 40});
+        double a3 = calculateAverage(new int[]{5, 6, 7, 8});
+
+        System.out.printf("Avg 1: %.1f%n", a1);
+        System.out.printf("Avg 2: %.1f%n", a2);
+        System.out.printf("Avg 3: %.1f%n", a3);
+
+        if (Math.abs(a1 - 1.5) < 0.001 && Math.abs(a2 - 25.0) < 0.001 && Math.abs(a3 - 6.5) < 0.001) {
+            System.out.println("FLAG REVEALED: DBG{ARRAY_AVG_9024G}");
+        } else {
+            System.out.println("Tests failed. Keep debugging to unlock flag.");
+        }
+    }
+}`,
+    adminNotes: 'Integer division sum / arr.length lost fractional precision.',
+    score: 10,
+    displayOrder: 7,
+    validationType: 'EXACT_OUTPUT',
+    flag: 'DBG{ARRAY_AVG_9024G}',
+    publicTestCases: [
+      { inputData: '1 2', expectedOutput: 'Avg 1: 1.5', explanation: 'Average of 1 and 2 is 1.5' },
+      { inputData: '10 20 30 40', expectedOutput: 'Avg 2: 25.0', explanation: 'Average of 10, 20, 30, 40 is 25.0' },
+      { inputData: '5 6 7 8', expectedOutput: 'Avg 3: 6.5', explanation: 'Average of 5, 6, 7, 8 is 6.5' },
+    ],
+    hiddenTestCases: [
+      { inputData: '3 4', expectedOutput: '3.5' },
+      { inputData: '1 1 2', expectedOutput: '1.33' },
+      { inputData: '0 0 1', expectedOutput: '0.33' },
+    ],
+  },
+  {
+    id: 'EASY-08',
+    roundSlug: 'easy',
+    difficulty: 'EASY',
+    title: 'Replace Negative Values',
+    slug: 'replace-negative-values',
+    description: 'Replace every negative value with 0 in an integer array. Fix the reversed condition that zeroes positive values instead of negative values to unlock the flag.',
+    starterCode: `import java.util.Arrays;
+
+public class Main {
+    public static int[] replaceNegatives(int[] arr) {
+        if (arr == null) return new int[0];
+        int[] result = arr.clone();
+        for (int i = 0; i < result.length; i++) {
+            // Primary Bug: reversed comparison replaces positive values with 0
+            if (result[i] > 0) {
+                result[i] = 0;
+            }
+        }
+        return result;
+    }
+
+    public static void main(String[] args) {
+        int[] r1 = replaceNegatives(new int[]{-1, 2, -3, 4, 0});
+        int[] r2 = replaceNegatives(new int[]{-5, -10});
+        int[] r3 = replaceNegatives(new int[]{7, 8, 9});
+
+        System.out.println("Replaced 1: " + Arrays.toString(r1));
+        System.out.println("Replaced 2: " + Arrays.toString(r2));
+        System.out.println("Replaced 3: " + Arrays.toString(r3));
+
+        if (Arrays.equals(r1, new int[]{0, 2, 0, 4, 0}) &&
+            Arrays.equals(r2, new int[]{0, 0}) &&
+            Arrays.equals(r3, new int[]{7, 8, 9})) {
+            System.out.println("FLAG REVEALED: DBG{REP_NEG_5516H}");
+        } else {
+            System.out.println("Tests failed. Keep debugging to unlock flag.");
+        }
+    }
+}`,
+    solutionCode: `import java.util.Arrays;
+
+public class Main {
+    public static int[] replaceNegatives(int[] arr) {
+        if (arr == null) return new int[0];
+        int[] result = arr.clone();
+        for (int i = 0; i < result.length; i++) {
+            if (result[i] < 0) {
+                result[i] = 0;
+            }
+        }
+        return result;
+    }
+
+    public static void main(String[] args) {
+        int[] r1 = replaceNegatives(new int[]{-1, 2, -3, 4, 0});
+        int[] r2 = replaceNegatives(new int[]{-5, -10});
+        int[] r3 = replaceNegatives(new int[]{7, 8, 9});
+
+        System.out.println("Replaced 1: " + Arrays.toString(r1));
+        System.out.println("Replaced 2: " + Arrays.toString(r2));
+        System.out.println("Replaced 3: " + Arrays.toString(r3));
+
+        if (Arrays.equals(r1, new int[]{0, 2, 0, 4, 0}) &&
+            Arrays.equals(r2, new int[]{0, 0}) &&
+            Arrays.equals(r3, new int[]{7, 8, 9})) {
+            System.out.println("FLAG REVEALED: DBG{REP_NEG_5516H}");
+        } else {
+            System.out.println("Tests failed. Keep debugging to unlock flag.");
+        }
+    }
+}`,
+    adminNotes: 'Condition tested result[i] > 0 instead of result[i] < 0.',
     score: 10,
     displayOrder: 8,
     validationType: 'EXACT_OUTPUT',
-    flag: 'DBG{ARRAY_REVERSE_2348F}',
+    flag: 'DBG{REP_NEG_5516H}',
     publicTestCases: [
-      { inputData: '[1, 2, 3, 4, 5]', expectedOutput: 'Reversed array: [5, 4, 3, 2, 1]', explanation: 'Odd-length integer array reversal' },
-      { inputData: '[10, 20]', expectedOutput: 'Reversed array: [20, 10]', explanation: 'Two-element array reversal' },
-      { inputData: '[42]', expectedOutput: 'Reversed array: [42]', explanation: 'Single-element array invariance' },
+      { inputData: '-1 2 -3 4 0', expectedOutput: 'Replaced 1: [0, 2, 0, 4, 0]', explanation: '-1 and -3 replaced with 0' },
+      { inputData: '-5 -10', expectedOutput: 'Replaced 2: [0, 0]', explanation: 'All negatives replaced with 0' },
+      { inputData: '7 8 9', expectedOutput: 'Replaced 3: [7, 8, 9]', explanation: 'No negatives, array remains unchanged' },
     ],
     hiddenTestCases: [
-      { inputData: '[1, 2, 3, 4]', expectedOutput: 'Reversed array: [4, 3, 2, 1]' },
-      { inputData: '[]', expectedOutput: 'Reversed array: []' },
+      { inputData: '-99 100', expectedOutput: '[0, 100]' },
+      { inputData: '0 -1', expectedOutput: '[0, 0]' },
+      { inputData: '-2 -4 -6', expectedOutput: '[0, 0, 0]' },
     ],
   },
   {
-    id: 'EASY-09-ANAGRAM-CHECK',
+    id: 'EASY-09',
     roundSlug: 'easy',
     difficulty: 'EASY',
-    title: 'Anagram Letter Frequency Counting',
-    slug: 'anagram-frequency-bounds',
-    description: 'Fix the letter frequency count array to properly normalize lowercase letters without ArrayIndexOutOfBoundsException.',
+    title: 'First Character',
+    slug: 'first-character',
+    description: 'Retrieve the first character of a non-empty string. Fix the indexing defect where s.length() is passed instead of index 0 to unlock the flag.',
     starterCode: `public class Main {
-    public static boolean isAnagram(String s, String t) {
-        if (s.length() != t.length()) return false;
-        int[] counts = new int[26];
-        for (int i = 0; i < s.length(); i++) {
-            // Bug: using raw char value as index causes index 97+ on size-26 array
-            counts[s.charAt(i)]++;
-            counts[t.charAt(i)]--;
-        }
-        for (int c : counts) {
-            if (c != 0) return false;
-        }
-        return true;
+    public static char getFirstCharacter(String s) {
+        if (s == null || s.isEmpty()) return ' ';
+        // Primary Bug: uses s.length() causing StringIndexOutOfBoundsException
+        return s.charAt(s.length());
     }
 
     public static void main(String[] args) {
         try {
-            boolean r = isAnagram("listen", "silent");
-            System.out.println("Anagram check: " + r);
-            if (r) {
-                System.out.println("FLAG REVEALED: DBG{ANAGRAM_FREQ_7741G}");
+            char c1 = getFirstCharacter("Debugging");
+            char c2 = getFirstCharacter("Java");
+            char c3 = getFirstCharacter("BugSniper");
+
+            System.out.println("First in Debugging: " + c1);
+            System.out.println("First in Java: " + c2);
+            System.out.println("First in BugSniper: " + c3);
+
+            if (c1 == 'D' && c2 == 'J' && c3 == 'B') {
+                System.out.println("FLAG REVEALED: DBG{FIRST_CHAR_2741I}");
+            } else {
+                System.out.println("Tests failed. Keep debugging to unlock flag.");
             }
         } catch (Exception e) {
             System.out.println("Tests failed with exception: " + e.getClass().getSimpleName());
@@ -547,373 +698,125 @@ public class Main {
     }
 }`,
     solutionCode: `public class Main {
-    public static boolean isAnagram(String s, String t) {
-        if (s.length() != t.length()) return false;
-        int[] counts = new int[26];
-        for (int i = 0; i < s.length(); i++) {
-            counts[s.charAt(i) - 'a']++;
-            counts[t.charAt(i) - 'a']--;
-        }
-        for (int c : counts) {
-            if (c != 0) return false;
-        }
-        return true;
+    public static char getFirstCharacter(String s) {
+        if (s == null || s.isEmpty()) return ' ';
+        return s.charAt(0);
     }
 
     public static void main(String[] args) {
         try {
-            boolean r = isAnagram("listen", "silent");
-            System.out.println("Anagram check: " + r);
-            if (r) {
-                System.out.println("FLAG REVEALED: DBG{ANAGRAM_FREQ_7741G}");
+            char c1 = getFirstCharacter("Debugging");
+            char c2 = getFirstCharacter("Java");
+            char c3 = getFirstCharacter("BugSniper");
+
+            System.out.println("First in Debugging: " + c1);
+            System.out.println("First in Java: " + c2);
+            System.out.println("First in BugSniper: " + c3);
+
+            if (c1 == 'D' && c2 == 'J' && c3 == 'B') {
+                System.out.println("FLAG REVEALED: DBG{FIRST_CHAR_2741I}");
+            } else {
+                System.out.println("Tests failed. Keep debugging to unlock flag.");
             }
         } catch (Exception e) {
             System.out.println("Tests failed with exception: " + e.getClass().getSimpleName());
         }
     }
 }`,
-    adminNotes: "Forgot to subtract 'a' from character index, causing out of bounds exception on array of size 26.",
+    adminNotes: 'Accessed charAt(s.length()) instead of charAt(0).',
     score: 10,
     displayOrder: 9,
     validationType: 'EXACT_OUTPUT',
-    flag: 'DBG{ANAGRAM_FREQ_7741G}',
+    flag: 'DBG{FIRST_CHAR_2741I}',
     publicTestCases: [
-      { inputData: '"listen", "silent"', expectedOutput: 'Anagram check (valid pair): true', explanation: 'Standard anagram pair' },
-      { inputData: '"rat", "car"', expectedOutput: 'Anagram check (letter mismatch): false', explanation: 'Different letter counts' },
-      { inputData: '"a", "b"', expectedOutput: 'Anagram check (single char mismatch): false', explanation: 'Single character mismatch' },
+      { inputData: 'Debugging', expectedOutput: 'First in Debugging: D', explanation: 'First character of "Debugging" is D' },
+      { inputData: 'Java', expectedOutput: 'First in Java: J', explanation: 'First character of "Java" is J' },
+      { inputData: 'BugSniper', expectedOutput: 'First in BugSniper: B', explanation: 'First character of "BugSniper" is B' },
     ],
     hiddenTestCases: [
-      { inputData: '"anagram", "nagaram"', expectedOutput: 'Anagram check: true' },
-      { inputData: '"ab", "a"', expectedOutput: 'Anagram check: false' },
+      { inputData: 'X', expectedOutput: 'X' },
+      { inputData: 'hello', expectedOutput: 'h' },
+      { inputData: '123', expectedOutput: '1' },
     ],
   },
   {
-    id: 'EASY-10-FIBONACCI-MEMO',
+    id: 'EASY-10',
     roundSlug: 'easy',
     difficulty: 'EASY',
-    title: 'Fibonacci Base Case Zero',
-    slug: 'fibonacci-base-zero',
-    description: 'Fix the Fibonacci sequence base condition so fib(0) evaluates to 0 rather than 1.',
+    title: 'Celsius to Fahrenheit',
+    slug: 'celsius-to-fahrenheit',
+    description: 'Convert temperature from Celsius to Fahrenheit using F = C * 9 / 5 + 32. Fix the sign defect where 32 is subtracted instead of added to unlock the flag.',
     starterCode: `public class Main {
-    public static int fib(int n) {
-        // Bug: fib(0) returns 1 incorrectly
-        if (n <= 1) return 1;
-        int a = 0, b = 1;
-        for (int i = 2; i <= n; i++) {
-            int c = a + b;
-            a = b;
-            b = c;
-        }
-        return b;
+    public static double celsiusToFahrenheit(double c) {
+        // Primary Bug: subtracts 32 instead of adding 32
+        return (c * 9.0 / 5.0) - 32.0;
     }
 
     public static void main(String[] args) {
-        int f0 = fib(0);
-        int f1 = fib(1);
-        int f6 = fib(6);
-        System.out.println("fib(0)=" + f0 + ", fib(1)=" + f1 + ", fib(6)=" + f6);
-        if (f0 == 0 && f1 == 1 && f6 == 8) {
-            System.out.println("FLAG REVEALED: DBG{FIB_BASE_ZERO_1189H}");
+        double f1 = celsiusToFahrenheit(0);
+        double f2 = celsiusToFahrenheit(100);
+        double f3 = celsiusToFahrenheit(-40);
+
+        System.out.printf("0C in F: %.1f%n", f1);
+        System.out.printf("100C in F: %.1f%n", f2);
+        System.out.printf(" -40C in F: %.1f%n", f3);
+
+        if (Math.abs(f1 - 32.0) < 0.001 && Math.abs(f2 - 212.0) < 0.001 && Math.abs(f3 - (-40.0)) < 0.001) {
+            System.out.println("FLAG REVEALED: DBG{CELSIUS_FAHR_6183J}");
         } else {
-            System.out.println("Tests failed. Base case fib(0) returned non-zero value.");
+            System.out.println("Tests failed. Keep debugging to unlock flag.");
         }
     }
 }`,
     solutionCode: `public class Main {
-    public static int fib(int n) {
-        if (n <= 0) return 0;
-        if (n == 1) return 1;
-        int a = 0, b = 1;
-        for (int i = 2; i <= n; i++) {
-            int c = a + b;
-            a = b;
-            b = c;
-        }
-        return b;
+    public static double celsiusToFahrenheit(double c) {
+        return (c * 9.0 / 5.0) + 32.0;
     }
 
     public static void main(String[] args) {
-        int f0 = fib(0);
-        int f1 = fib(1);
-        int f6 = fib(6);
-        System.out.println("fib(0)=" + f0 + ", fib(1)=" + f1 + ", fib(6)=" + f6);
-        if (f0 == 0 && f1 == 1 && f6 == 8) {
-            System.out.println("FLAG REVEALED: DBG{FIB_BASE_ZERO_1189H}");
+        double f1 = celsiusToFahrenheit(0);
+        double f2 = celsiusToFahrenheit(100);
+        double f3 = celsiusToFahrenheit(-40);
+
+        System.out.printf("0C in F: %.1f%n", f1);
+        System.out.printf("100C in F: %.1f%n", f2);
+        System.out.printf(" -40C in F: %.1f%n", f3);
+
+        if (Math.abs(f1 - 32.0) < 0.001 && Math.abs(f2 - 212.0) < 0.001 && Math.abs(f3 - (-40.0)) < 0.001) {
+            System.out.println("FLAG REVEALED: DBG{CELSIUS_FAHR_6183J}");
         } else {
-            System.out.println("Tests failed. Base case fib(0) returned non-zero value.");
+            System.out.println("Tests failed. Keep debugging to unlock flag.");
         }
     }
 }`,
-    adminNotes: 'Base condition returned 1 for both n=0 and n=1; standard Fibonacci definition has fib(0)=0.',
+    adminNotes: 'Formula subtracted 32 instead of adding 32.',
     score: 10,
     displayOrder: 10,
     validationType: 'EXACT_OUTPUT',
-    flag: 'DBG{FIB_BASE_ZERO_1189H}',
+    flag: 'DBG{CELSIUS_FAHR_6183J}',
     publicTestCases: [
-      { inputData: '0, 1, 6', expectedOutput: 'fib(0)=0, fib(1)=1, fib(6)=8', explanation: 'Verifies fib(0)=0, fib(1)=1, and fib(6)=8' },
-      { inputData: '2', expectedOutput: 'fib(2)=1', explanation: 'First sum after base cases' },
-      { inputData: '5', expectedOutput: 'fib(5)=5', explanation: 'Known Fibonacci equality where fib(5) == 5' },
+      { inputData: '0', expectedOutput: '0C in F: 32.0', explanation: 'Freezing point of water: 0 C = 32 F' },
+      { inputData: '100', expectedOutput: '100C in F: 212.0', explanation: 'Boiling point of water: 100 C = 212 F' },
+      { inputData: '-40', expectedOutput: ' -40C in F: -40.0', explanation: 'Scales intersect at -40' },
     ],
     hiddenTestCases: [
-      { inputData: '10', expectedOutput: 'fib(10)=55' },
-      { inputData: '12', expectedOutput: 'fib(12)=144' },
+      { inputData: '25', expectedOutput: '77.0' },
+      { inputData: '37', expectedOutput: '98.6' },
+      { inputData: '-10', expectedOutput: '14.0' },
     ],
   },
   {
-    id: 'EASY-11-MAX-ELEMENT',
+    id: 'EASY-11',
     roundSlug: 'easy',
     difficulty: 'EASY',
-    title: 'Negative Array Maximum Initializer',
-    slug: 'max-element-negative-init',
-    description: 'Fix the maximum value search function so arrays containing only negative integers return the correct max.',
-    starterCode: `public class Main {
-    public static int findMax(int[] arr) {
-        // Bug: Initializing to 0 fails when all values in array are negative
-        int max = 0;
-        for (int v : arr) {
-            if (v > max) max = v;
-        }
-        return max;
-    }
-
-    public static void main(String[] args) {
-        int[] negatives = { -15, -3, -8, -22 };
-        int res = findMax(negatives);
-        System.out.println("Max negative: " + res);
-        if (res == -3) {
-            System.out.println("FLAG REVEALED: DBG{MAX_INIT_NEG_5621I}");
-        } else {
-            System.out.println("Tests failed. Expected -3 but got " + res);
-        }
-    }
-}`,
-    solutionCode: `public class Main {
-    public static int findMax(int[] arr) {
-        int max = arr[0];
-        for (int i = 1; i < arr.length; i++) {
-            if (arr[i] > max) max = arr[i];
-        }
-        return max;
-    }
-
-    public static void main(String[] args) {
-        int[] negatives = { -15, -3, -8, -22 };
-        int res = findMax(negatives);
-        System.out.println("Max negative: " + res);
-        if (res == -3) {
-            System.out.println("FLAG REVEALED: DBG{MAX_INIT_NEG_5621I}");
-        } else {
-            System.out.println("Tests failed. Expected -3 but got " + res);
-        }
-    }
-}`,
-    adminNotes: 'Max initialized to 0 instead of Integer.MIN_VALUE or arr[0], producing 0 on all-negative array.',
-    score: 10,
-    displayOrder: 11,
-    validationType: 'EXACT_OUTPUT',
-    flag: 'DBG{MAX_INIT_NEG_5621I}',
-    publicTestCases: [
-      { inputData: '[-15, -3, -8, -22]', expectedOutput: 'Max negative: -3', explanation: 'All-negative array where maximum is -3' },
-      { inputData: '[10, 45, 3]', expectedOutput: 'Max value: 45', explanation: 'Standard positive array' },
-      { inputData: '[-100]', expectedOutput: 'Max value: -100', explanation: 'Single negative item array' },
-    ],
-    hiddenTestCases: [
-      { inputData: '[-1, -2, -3]', expectedOutput: 'Max value: -1' },
-      { inputData: '[0, -5, 5]', expectedOutput: 'Max value: 5' },
-    ],
-  },
-  {
-    id: 'EASY-12-SUBSTRING-INDEX',
-    roundSlug: 'easy',
-    difficulty: 'EASY',
-    title: 'Substring End Index Exclusion',
-    slug: 'substring-end-index',
-    description: 'Fix string extraction logic taking into account that String.substring(begin, end) has an exclusive end index.',
-    starterCode: `public class Main {
-    public static String getPrefix(String s, int length) {
-        // Bug: s.substring(0, length - 1) truncates the last desired character
-        return s.substring(0, length - 1);
-    }
-
-    public static void main(String[] args) {
-        String sub = getPrefix("BUGRIP_TOURNAMENT", 6);
-        System.out.println("Extracted prefix: " + sub);
-        if ("BUGRIP".equals(sub)) {
-            System.out.println("FLAG REVEALED: DBG{SUBSTRING_BOUND_3890J}");
-        } else {
-            System.out.println("Tests failed. Prefix dropped terminal character.");
-        }
-    }
-}`,
-    solutionCode: `public class Main {
-    public static String getPrefix(String s, int length) {
-        return s.substring(0, length);
-    }
-
-    public static void main(String[] args) {
-        String sub = getPrefix("BUGRIP_TOURNAMENT", 6);
-        System.out.println("Extracted prefix: " + sub);
-        if ("BUGRIP".equals(sub)) {
-            System.out.println("FLAG REVEALED: DBG{SUBSTRING_BOUND_3890J}");
-        } else {
-            System.out.println("Tests failed. Prefix dropped terminal character.");
-        }
-    }
-}`,
-    adminNotes: 'Java substring end index is exclusive, so substring(0, length) correctly yields length characters.',
-    score: 10,
-    displayOrder: 12,
-    validationType: 'EXACT_OUTPUT',
-    flag: 'DBG{SUBSTRING_BOUND_3890J}',
-    publicTestCases: [
-      { inputData: '"BUGRIP_TOURNAMENT", 6', expectedOutput: 'Extracted prefix: BUGRIP', explanation: 'Extracts 6 characters from string start' },
-      { inputData: '"JAVA", 2', expectedOutput: 'Extracted prefix: JA', explanation: 'Extracts 2 characters' },
-      { inputData: '"HELLO", 1', expectedOutput: 'Extracted prefix: H', explanation: 'Extracts single first character' },
-    ],
-    hiddenTestCases: [
-      { inputData: '"TESTCASE", 8', expectedOutput: 'Extracted prefix: TESTCASE' },
-      { inputData: '"DEBUG", 0', expectedOutput: 'Extracted prefix: ' },
-    ],
-  },
-  {
-    id: 'EASY-13-DUPLICATE-REMOVAL',
-    roundSlug: 'easy',
-    difficulty: 'EASY',
-    title: 'Sorted Array Duplicate Removal',
-    slug: 'sorted-dedup-pointer',
-    description: 'Fix the two-pointer in-place duplicate removal algorithm on sorted arrays.',
-    starterCode: `public class Main {
-    public static int removeDuplicates(int[] nums) {
-        if (nums.length == 0) return 0;
-        int writeIndex = 0;
-        for (int i = 1; i < nums.length; i++) {
-            if (nums[i] != nums[writeIndex]) {
-                // Bug: writeIndex written without incrementing, overwriting first element
-                nums[writeIndex] = nums[i];
-            }
-        }
-        return writeIndex + 1;
-    }
-
-    public static void main(String[] args) {
-        int[] nums = { 1, 1, 2, 2, 3 };
-        int len = removeDuplicates(nums);
-        System.out.println("New length: " + len + ", first 3: " + nums[0] + "," + nums[1] + "," + nums[2]);
-        if (len == 3 && nums[0] == 1 && nums[1] == 2 && nums[2] == 3) {
-            System.out.println("FLAG REVEALED: DBG{DEDUP_POINTER_6127K}");
-        } else {
-            System.out.println("Tests failed. In-place deduplication pointer corrupted array.");
-        }
-    }
-}`,
-    solutionCode: `public class Main {
-    public static int removeDuplicates(int[] nums) {
-        if (nums.length == 0) return 0;
-        int writeIndex = 0;
-        for (int i = 1; i < nums.length; i++) {
-            if (nums[i] != nums[writeIndex]) {
-                writeIndex++;
-                nums[writeIndex] = nums[i];
-            }
-        }
-        return writeIndex + 1;
-    }
-
-    public static void main(String[] args) {
-        int[] nums = { 1, 1, 2, 2, 3 };
-        int len = removeDuplicates(nums);
-        System.out.println("New length: " + len + ", first 3: " + nums[0] + "," + nums[1] + "," + nums[2]);
-        if (len == 3 && nums[0] == 1 && nums[1] == 2 && nums[2] == 3) {
-            System.out.println("FLAG REVEALED: DBG{DEDUP_POINTER_6127K}");
-        } else {
-            System.out.println("Tests failed. In-place deduplication pointer corrupted array.");
-        }
-    }
-}`,
-    adminNotes: 'writeIndex was not incremented before placing the distinct element.',
-    score: 10,
-    displayOrder: 13,
-    validationType: 'EXACT_OUTPUT',
-    flag: 'DBG{DEDUP_POINTER_6127K}',
-    publicTestCases: [
-      { inputData: '[1, 1, 2, 2, 3]', expectedOutput: 'New length: 3, first 3: 1,2,3', explanation: 'Deduplicates sorted array with consecutive duplicates' },
-      { inputData: '[1, 2, 3]', expectedOutput: 'New length: 3', explanation: 'Already distinct sorted array' },
-      { inputData: '[7, 7, 7]', expectedOutput: 'New length: 1', explanation: 'Array with all identical elements' },
-    ],
-    hiddenTestCases: [
-      { inputData: '[0, 0, 1, 1, 1, 2, 2, 3, 3, 4]', expectedOutput: 'New length: 5' },
-      { inputData: '[42]', expectedOutput: 'New length: 1' },
-    ],
-  },
-  {
-    id: 'EASY-14-POWER-OF-TWO',
-    roundSlug: 'easy',
-    difficulty: 'EASY',
-    title: 'Bitwise Power of Two Precedence',
-    slug: 'bitwise-precedence-power',
-    description: 'Fix the bitwise expression precedence in power-of-two verification.',
-    starterCode: `public class Main {
-    public static boolean isPowerOfTwo(int n) {
-        if (n <= 0) return false;
-        // Bug: == has higher precedence than &, so this evaluates n & ((n - 1) == 0)
-        return (n & n - 1 == 0);
-    }
-
-    public static void main(String[] args) {
-        boolean p16 = isPowerOfTwo(16);
-        boolean p18 = isPowerOfTwo(18);
-        System.out.println("16 power of two: " + p16 + ", 18 power of two: " + p18);
-        if (p16 && !p18) {
-            System.out.println("FLAG REVEALED: DBG{BITWISE_PREC_9482L}");
-        } else {
-            System.out.println("Tests failed. Bitwise operator precedence defect detected.");
-        }
-    }
-}`,
-    solutionCode: `public class Main {
-    public static boolean isPowerOfTwo(int n) {
-        if (n <= 0) return false;
-        return (n & (n - 1)) == 0;
-    }
-
-    public static void main(String[] args) {
-        boolean p16 = isPowerOfTwo(16);
-        boolean p18 = isPowerOfTwo(18);
-        System.out.println("16 power of two: " + p16 + ", 18 power of two: " + p18);
-        if (p16 && !p18) {
-            System.out.println("FLAG REVEALED: DBG{BITWISE_PREC_9482L}");
-        } else {
-            System.out.println("Tests failed. Bitwise operator precedence defect detected.");
-        }
-    }
-}`,
-    adminNotes: 'In Java, == binds tighter than &. Wrap (n & (n - 1)) in parentheses.',
-    score: 10,
-    displayOrder: 14,
-    validationType: 'EXACT_OUTPUT',
-    flag: 'DBG{BITWISE_PREC_9482L}',
-    publicTestCases: [
-      { inputData: '16, 18', expectedOutput: '16 power of two: true, 18 power of two: false', explanation: '16 is 2^4 (power of 2), 18 is not' },
-      { inputData: '1', expectedOutput: '1 power of two: true', explanation: '2^0 = 1 is power of two' },
-      { inputData: '0', expectedOutput: '0 power of two: false', explanation: 'Zero is non-positive' },
-    ],
-    hiddenTestCases: [
-      { inputData: '1024', expectedOutput: '1024 power of two: true' },
-      { inputData: '1000', expectedOutput: '1000 power of two: false' },
-    ],
-  },
-  {
-    id: 'EASY-15-COUNT-DIGITS',
-    roundSlug: 'easy',
-    difficulty: 'EASY',
-    title: 'Zero Integer Digit Count Edge Case',
-    slug: 'count-digits-zero-edge',
-    description: 'Fix the integer digit counting algorithm so the number 0 is correctly counted as having 1 digit.',
+    title: 'Count Digits',
+    slug: 'count-digits',
+    description: 'Count the number of digits in an integer. Fix the edge-case handling for 0 where the while loop fails to execute and returns 0 digits instead of 1 to unlock the flag.',
     starterCode: `public class Main {
     public static int countDigits(int n) {
-        int num = Math.abs(n);
         int count = 0;
-        // Bug: while loop condition num > 0 never executes when input is 0
+        int num = Math.abs(n);
+        // Primary Bug: when n is 0, the loop does not execute and returns 0 instead of 1
         while (num > 0) {
             count++;
             num /= 10;
@@ -922,22 +825,26 @@ public class Main {
     }
 
     public static void main(String[] args) {
-        int d0 = countDigits(0);
-        int d123 = countDigits(123);
-        int dNeg7 = countDigits(-7);
-        System.out.println("digits(0)=" + d0 + ", digits(123)=" + d123 + ", digits(-7)=" + dNeg7);
-        if (d0 == 1 && d123 == 3 && dNeg7 == 1) {
-            System.out.println("FLAG REVEALED: DBG{DIGIT_COUNT_7734M}");
+        int d1 = countDigits(0);
+        int d2 = countDigits(12345);
+        int d3 = countDigits(-9876);
+
+        System.out.println("Digits in 0: " + d1);
+        System.out.println("Digits in 12345: " + d2);
+        System.out.println("Digits in -9876: " + d3);
+
+        if (d1 == 1 && d2 == 5 && d3 == 4) {
+            System.out.println("FLAG REVEALED: DBG{DIGIT_LEN_9935K}");
         } else {
-            System.out.println("Tests failed. Zero digit count returned 0.");
+            System.out.println("Tests failed. Keep debugging to unlock flag.");
         }
     }
 }`,
     solutionCode: `public class Main {
     public static int countDigits(int n) {
         if (n == 0) return 1;
-        int num = Math.abs(n);
         int count = 0;
+        int num = Math.abs(n);
         while (num > 0) {
             count++;
             num /= 10;
@@ -946,30 +853,347 @@ public class Main {
     }
 
     public static void main(String[] args) {
-        int d0 = countDigits(0);
-        int d123 = countDigits(123);
-        int dNeg7 = countDigits(-7);
-        System.out.println("digits(0)=" + d0 + ", digits(123)=" + d123 + ", digits(-7)=" + dNeg7);
-        if (d0 == 1 && d123 == 3 && dNeg7 == 1) {
-            System.out.println("FLAG REVEALED: DBG{DIGIT_COUNT_7734M}");
+        int d1 = countDigits(0);
+        int d2 = countDigits(12345);
+        int d3 = countDigits(-9876);
+
+        System.out.println("Digits in 0: " + d1);
+        System.out.println("Digits in 12345: " + d2);
+        System.out.println("Digits in -9876: " + d3);
+
+        if (d1 == 1 && d2 == 5 && d3 == 4) {
+            System.out.println("FLAG REVEALED: DBG{DIGIT_LEN_9935K}");
         } else {
-            System.out.println("Tests failed. Zero digit count returned 0.");
+            System.out.println("Tests failed. Keep debugging to unlock flag.");
         }
     }
 }`,
-    adminNotes: 'Input 0 bypassed while (num > 0) loop, returning 0 instead of 1.',
+    adminNotes: 'Zero was reported as 0 digits instead of 1 digit.',
+    score: 10,
+    displayOrder: 11,
+    validationType: 'EXACT_OUTPUT',
+    flag: 'DBG{DIGIT_LEN_9935K}',
+    publicTestCases: [
+      { inputData: '0', expectedOutput: 'Digits in 0: 1', explanation: 'The number 0 has exactly 1 digit' },
+      { inputData: '12345', expectedOutput: 'Digits in 12345: 5', explanation: '12345 has 5 digits' },
+      { inputData: '-9876', expectedOutput: 'Digits in -9876: 4', explanation: 'Negative sign excluded; -9876 has 4 digits' },
+    ],
+    hiddenTestCases: [
+      { inputData: '1000', expectedOutput: '4' },
+      { inputData: '-5', expectedOutput: '1' },
+      { inputData: '999999', expectedOutput: '6' },
+    ],
+  },
+  {
+    id: 'EASY-12',
+    roundSlug: 'easy',
+    difficulty: 'EASY',
+    title: 'Swap Two Numbers',
+    slug: 'swap-two-numbers',
+    description: 'Swap two integers using a standard temporary variable. Fix the incorrect assignment order where the second variable receives an already overwritten value to unlock the flag.',
+    starterCode: `import java.util.Arrays;
+
+public class Main {
+    public static int[] swapNumbers(int a, int b) {
+        int temp = a;
+        a = b;
+        // Primary Bug: b assigned from overwritten a instead of temp
+        b = a;
+        return new int[]{a, b};
+    }
+
+    public static void main(String[] args) {
+        int[] s1 = swapNumbers(10, 20);
+        int[] s2 = swapNumbers(5, -3);
+        int[] s3 = swapNumbers(0, 100);
+
+        System.out.println("Swapped 10, 20: " + Arrays.toString(s1));
+        System.out.println("Swapped 5, -3: " + Arrays.toString(s2));
+        System.out.println("Swapped 0, 100: " + Arrays.toString(s3));
+
+        if (Arrays.equals(s1, new int[]{20, 10}) &&
+            Arrays.equals(s2, new int[]{-3, 5}) &&
+            Arrays.equals(s3, new int[]{100, 0})) {
+            System.out.println("FLAG REVEALED: DBG{SWAP_VALS_4207L}");
+        } else {
+            System.out.println("Tests failed. Keep debugging to unlock flag.");
+        }
+    }
+}`,
+    solutionCode: `import java.util.Arrays;
+
+public class Main {
+    public static int[] swapNumbers(int a, int b) {
+        int temp = a;
+        a = b;
+        b = temp;
+        return new int[]{a, b};
+    }
+
+    public static void main(String[] args) {
+        int[] s1 = swapNumbers(10, 20);
+        int[] s2 = swapNumbers(5, -3);
+        int[] s3 = swapNumbers(0, 100);
+
+        System.out.println("Swapped 10, 20: " + Arrays.toString(s1));
+        System.out.println("Swapped 5, -3: " + Arrays.toString(s2));
+        System.out.println("Swapped 0, 100: " + Arrays.toString(s3));
+
+        if (Arrays.equals(s1, new int[]{20, 10}) &&
+            Arrays.equals(s2, new int[]{-3, 5}) &&
+            Arrays.equals(s3, new int[]{100, 0})) {
+            System.out.println("FLAG REVEALED: DBG{SWAP_VALS_4207L}");
+        } else {
+            System.out.println("Tests failed. Keep debugging to unlock flag.");
+        }
+    }
+}`,
+    adminNotes: 'b was assigned from a instead of temp, leaving both values equal.',
+    score: 10,
+    displayOrder: 12,
+    validationType: 'EXACT_OUTPUT',
+    flag: 'DBG{SWAP_VALS_4207L}',
+    publicTestCases: [
+      { inputData: '10 20', expectedOutput: 'Swapped 10, 20: [20, 10]', explanation: '10 and 20 are swapped' },
+      { inputData: '5 -3', expectedOutput: 'Swapped 5, -3: [-3, 5]', explanation: '5 and -3 are swapped' },
+      { inputData: '0 100', expectedOutput: 'Swapped 0, 100: [100, 0]', explanation: '0 and 100 are swapped' },
+    ],
+    hiddenTestCases: [
+      { inputData: '7 7', expectedOutput: '[7, 7]' },
+      { inputData: '-15 -30', expectedOutput: '[-30, -15]' },
+      { inputData: '42 99', expectedOutput: '[99, 42]' },
+    ],
+  },
+  {
+    id: 'EASY-13',
+    roundSlug: 'easy',
+    difficulty: 'EASY',
+    title: 'Search an Array',
+    slug: 'search-an-array',
+    description: 'Check if a target integer exists within an array and return YES if found, otherwise NO. Fix the reversed comparison condition that tests x != target to unlock the flag.',
+    starterCode: `public class Main {
+    public static String searchArray(int[] arr, int target) {
+        if (arr == null) return "NO";
+        for (int x : arr) {
+            // Primary Bug: condition is reversed (!= instead of ==)
+            if (x != target) {
+                return "YES";
+            }
+        }
+        return "NO";
+    }
+
+    public static void main(String[] args) {
+        String s1 = searchArray(new int[]{1, 3, 5, 7}, 5);
+        String s2 = searchArray(new int[]{1, 3, 5, 7}, 9);
+        String s3 = searchArray(new int[]{}, 42);
+
+        System.out.println("Search 5 in [1,3,5,7]: " + s1);
+        System.out.println("Search 9 in [1,3,5,7]: " + s2);
+        System.out.println("Search 42 in empty: " + s3);
+
+        if ("YES".equals(s1) && "NO".equals(s2) && "NO".equals(s3)) {
+            System.out.println("FLAG REVEALED: DBG{ARRAY_SRCH_8312M}");
+        } else {
+            System.out.println("Tests failed. Keep debugging to unlock flag.");
+        }
+    }
+}`,
+    solutionCode: `public class Main {
+    public static String searchArray(int[] arr, int target) {
+        if (arr == null) return "NO";
+        for (int x : arr) {
+            if (x == target) {
+                return "YES";
+            }
+        }
+        return "NO";
+    }
+
+    public static void main(String[] args) {
+        String s1 = searchArray(new int[]{1, 3, 5, 7}, 5);
+        String s2 = searchArray(new int[]{1, 3, 5, 7}, 9);
+        String s3 = searchArray(new int[]{}, 42);
+
+        System.out.println("Search 5 in [1,3,5,7]: " + s1);
+        System.out.println("Search 9 in [1,3,5,7]: " + s2);
+        System.out.println("Search 42 in empty: " + s3);
+
+        if ("YES".equals(s1) && "NO".equals(s2) && "NO".equals(s3)) {
+            System.out.println("FLAG REVEALED: DBG{ARRAY_SRCH_8312M}");
+        } else {
+            System.out.println("Tests failed. Keep debugging to unlock flag.");
+        }
+    }
+}`,
+    adminNotes: 'Condition checked x != target instead of x == target.',
+    score: 10,
+    displayOrder: 13,
+    validationType: 'EXACT_OUTPUT',
+    flag: 'DBG{ARRAY_SRCH_8312M}',
+    publicTestCases: [
+      { inputData: '1 3 5 7 | 5', expectedOutput: 'Search 5 in [1,3,5,7]: YES', explanation: '5 exists in array' },
+      { inputData: '1 3 5 7 | 9', expectedOutput: 'Search 9 in [1,3,5,7]: NO', explanation: '9 does not exist in array' },
+      { inputData: 'empty | 42', expectedOutput: 'Search 42 in empty: NO', explanation: 'Empty array returns NO' },
+    ],
+    hiddenTestCases: [
+      { inputData: '10 20 30 | 20', expectedOutput: 'YES' },
+      { inputData: '4 8 12 | 1', expectedOutput: 'NO' },
+      { inputData: '-5 0 5 | -5', expectedOutput: 'YES' },
+    ],
+  },
+  {
+    id: 'EASY-14',
+    roundSlug: 'easy',
+    difficulty: 'EASY',
+    title: 'Remove Spaces',
+    slug: 'remove-spaces',
+    description: 'Remove all standard space characters from a string. Fix the replacement bug where spaces are replaced with underscores instead of being stripped to unlock the flag.',
+    starterCode: `public class Main {
+    public static String removeSpaces(String s) {
+        if (s == null) return "";
+        // Primary Bug: replaces space with underscore instead of empty string
+        return s.replace(" ", "_");
+    }
+
+    public static void main(String[] args) {
+        String str1 = removeSpaces("hello world");
+        String str2 = removeSpaces(" b u g   s n i p e r ");
+        String str3 = removeSpaces("nospaces");
+
+        System.out.println("Clean 1: " + str1);
+        System.out.println("Clean 2: " + str2);
+        System.out.println("Clean 3: " + str3);
+
+        if ("helloworld".equals(str1) && "bugsniper".equals(str2) && "nospaces".equals(str3)) {
+            System.out.println("FLAG REVEALED: DBG{NO_SPACES_5749N}");
+        } else {
+            System.out.println("Tests failed. Keep debugging to unlock flag.");
+        }
+    }
+}`,
+    solutionCode: `public class Main {
+    public static String removeSpaces(String s) {
+        if (s == null) return "";
+        return s.replace(" ", "");
+    }
+
+    public static void main(String[] args) {
+        String str1 = removeSpaces("hello world");
+        String str2 = removeSpaces(" b u g   s n i p e r ");
+        String str3 = removeSpaces("nospaces");
+
+        System.out.println("Clean 1: " + str1);
+        System.out.println("Clean 2: " + str2);
+        System.out.println("Clean 3: " + str3);
+
+        if ("helloworld".equals(str1) && "bugsniper".equals(str2) && "nospaces".equals(str3)) {
+            System.out.println("FLAG REVEALED: DBG{NO_SPACES_5749N}");
+        } else {
+            System.out.println("Tests failed. Keep debugging to unlock flag.");
+        }
+    }
+}`,
+    adminNotes: 'Replaced spaces with "_" instead of removing them with "".',
+    score: 10,
+    displayOrder: 14,
+    validationType: 'EXACT_OUTPUT',
+    flag: 'DBG{NO_SPACES_5749N}',
+    publicTestCases: [
+      { inputData: 'hello world', expectedOutput: 'Clean 1: helloworld', explanation: 'Single space removed: "hello world" -> "helloworld"' },
+      { inputData: ' b u g   s n i p e r ', expectedOutput: 'Clean 2: bugsniper', explanation: 'All spaces removed: " b u g   s n i p e r " -> "bugsniper"' },
+      { inputData: 'nospaces', expectedOutput: 'Clean 3: nospaces', explanation: 'No spaces present, string remains unchanged' },
+    ],
+    hiddenTestCases: [
+      { inputData: 'a b c', expectedOutput: 'abc' },
+      { inputData: '   ', expectedOutput: '' },
+      { inputData: 'java  ctf', expectedOutput: 'javactf' },
+    ],
+  },
+  {
+    id: 'EASY-15',
+    roundSlug: 'easy',
+    difficulty: 'EASY',
+    title: 'Simple Grade Calculator',
+    slug: 'simple-grade-calculator',
+    description: 'Calculate letter grades based on scores: 90+ -> A, 75-89 -> B, 60-74 -> C, <60 -> D. Fix the swapped branch conditions for C and D to unlock the flag.',
+    starterCode: `public class Main {
+    public static String calculateGrade(int score) {
+        if (score >= 90) {
+            return "A";
+        } else if (score >= 75) {
+            return "B";
+        } else if (score < 60) {
+            // Primary Bug: swapped C and D conditions
+            return "C";
+        } else {
+            return "D";
+        }
+    }
+
+    public static void main(String[] args) {
+        String g1 = calculateGrade(95);
+        String g2 = calculateGrade(80);
+        String g3 = calculateGrade(65);
+        String g4 = calculateGrade(45);
+
+        System.out.println("Grade 95: " + g1);
+        System.out.println("Grade 80: " + g2);
+        System.out.println("Grade 65: " + g3);
+        System.out.println("Grade 45: " + g4);
+
+        if ("A".equals(g1) && "B".equals(g2) && "C".equals(g3) && "D".equals(g4)) {
+            System.out.println("FLAG REVEALED: DBG{GRADE_CALC_1628O}");
+        } else {
+            System.out.println("Tests failed. Keep debugging to unlock flag.");
+        }
+    }
+}`,
+    solutionCode: `public class Main {
+    public static String calculateGrade(int score) {
+        if (score >= 90) {
+            return "A";
+        } else if (score >= 75) {
+            return "B";
+        } else if (score >= 60) {
+            return "C";
+        } else {
+            return "D";
+        }
+    }
+
+    public static void main(String[] args) {
+        String g1 = calculateGrade(95);
+        String g2 = calculateGrade(80);
+        String g3 = calculateGrade(65);
+        String g4 = calculateGrade(45);
+
+        System.out.println("Grade 95: " + g1);
+        System.out.println("Grade 80: " + g2);
+        System.out.println("Grade 65: " + g3);
+        System.out.println("Grade 45: " + g4);
+
+        if ("A".equals(g1) && "B".equals(g2) && "C".equals(g3) && "D".equals(g4)) {
+            System.out.println("FLAG REVEALED: DBG{GRADE_CALC_1628O}");
+        } else {
+            System.out.println("Tests failed. Keep debugging to unlock flag.");
+        }
+    }
+}`,
+    adminNotes: 'Branches for grades C and D were swapped in conditional cascade.',
     score: 10,
     displayOrder: 15,
     validationType: 'EXACT_OUTPUT',
-    flag: 'DBG{DIGIT_COUNT_7734M}',
+    flag: 'DBG{GRADE_CALC_1628O}',
     publicTestCases: [
-      { inputData: '0, 123, -7', expectedOutput: 'digits(0)=1, digits(123)=3, digits(-7)=1', explanation: 'Counts digits for zero, positive, and negative numbers' },
-      { inputData: '9999', expectedOutput: 'digits(9999)=4', explanation: 'Four digit integer' },
-      { inputData: '-500', expectedOutput: 'digits(-500)=3', explanation: 'Three digit negative integer' },
+      { inputData: '95', expectedOutput: 'Grade 95: A', explanation: 'Score 95 receives grade A (>= 90)' },
+      { inputData: '80', expectedOutput: 'Grade 80: B', explanation: 'Score 80 receives grade B (75-89)' },
+      { inputData: '65', expectedOutput: 'Grade 65: C', explanation: 'Score 65 receives grade C (60-74)' },
     ],
     hiddenTestCases: [
-      { inputData: '100000', expectedOutput: 'digits(100000)=6' },
-      { inputData: '9', expectedOutput: 'digits(9)=1' },
+      { inputData: '45', expectedOutput: 'Grade 45: D' },
+      { inputData: '60', expectedOutput: 'C' },
+      { inputData: '59', expectedOutput: 'D' },
     ],
   },
 ];

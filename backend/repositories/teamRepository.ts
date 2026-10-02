@@ -13,6 +13,7 @@ import {
   auditLogs,
 } from '../../src/db/schema.ts';
 import { teamRealtimeService } from '../services/teamRealtimeService.ts';
+import { presenceService } from '../services/presenceService.ts';
 
 export class TeamRepository {
   /**
@@ -136,6 +137,7 @@ export class TeamRepository {
     if (updated.length > 0) {
       for (const row of updated) {
         await teamRealtimeService.unregisterSession(row.id);
+        presenceService.expireSession(row.id);
         try {
           await db.insert(auditLogs).values({
             action: 'PARTICIPANT_SESSION_EXPIRED',

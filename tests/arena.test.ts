@@ -298,6 +298,7 @@ public class Solution {
   if (testsFailed > 0) {
     process.exit(1);
   }
+  process.exit(0);
 }
 
 runArenaTestSuite().catch((err) => {

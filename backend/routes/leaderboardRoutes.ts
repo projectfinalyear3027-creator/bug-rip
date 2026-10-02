@@ -138,17 +138,31 @@ leaderboardRouter.get('/', async (req: Request, res: Response, next: NextFunctio
         leaderboard = matchData.leaderboard;
         isArchivedMatch = matchData.isArchived;
       } else {
-        leaderboard = await eventService.getPublicLeaderboard();
+        leaderboard = await eventService.getPublicLeaderboard({
+          matchNumber: selectedMatchNumber,
+          liveScoreOrdering: true,
+          isArchived: false,
+        });
       }
     } else {
-      leaderboard = await eventService.getPublicLeaderboard();
+      leaderboard = await eventService.getPublicLeaderboard({
+        matchNumber: selectedMatchNumber,
+        liveScoreOrdering: true,
+        isArchived: false,
+      });
     }
+
+    const onlineCount = Array.isArray(leaderboard)
+      ? leaderboard.filter((entry: any) => entry.isOnline).length
+      : 0;
 
     res.json({
       success: true,
       timestamp: new Date().toISOString(),
       matchNumber: selectedMatchNumber,
       isArchivedMatch,
+      onlineCount,
+      totalParticipants: Array.isArray(leaderboard) ? leaderboard.length : 0,
       rankingCriteria: [
         '1. Problems Solved (DESC)',
         '2. Total Score (DESC)',
@@ -221,11 +235,20 @@ leaderboardRouter.get('/stream', async (req: Request, res: Response) => {
 
   // Send initial snapshot
   try {
-    const publicLeaderboard = await eventService.getPublicLeaderboard();
     const eventStatus = await eventService.getEventStatus();
+    const publicLeaderboard = await eventService.getPublicLeaderboard({
+      matchNumber: eventStatus.currentMatchNumber,
+      liveScoreOrdering: true,
+    });
+    const onlineCount = Array.isArray(publicLeaderboard)
+      ? publicLeaderboard.filter((entry: any) => entry.isOnline).length
+      : 0;
 
     const initialPayload = {
       timestamp: new Date().toISOString(),
+      matchNumber: eventStatus.currentMatchNumber,
+      onlineCount,
+      totalParticipants: Array.isArray(publicLeaderboard) ? publicLeaderboard.length : 0,
       event: {
         status: eventStatus.status,
         durationMinutes: eventStatus.durationMinutes,
@@ -236,6 +259,7 @@ leaderboardRouter.get('/stream', async (req: Request, res: Response) => {
         pausedAt: eventStatus.pausedAt,
         endedAt: eventStatus.endedAt,
         serverTime: eventStatus.serverTime,
+        currentMatchNumber: eventStatus.currentMatchNumber,
       },
       leaderboard: publicLeaderboard,
     };

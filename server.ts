@@ -9,6 +9,7 @@ import { leaderboardRouter } from './backend/routes/leaderboardRoutes.ts';
 import { adminRouter } from './backend/routes/adminRoutes.ts';
 import { challengeRouter, handleRunExecution } from './backend/routes/challengeRoutes.ts';
 import { antiCheatRouter } from './backend/routes/antiCheatRoutes.ts';
+import { presenceRouter } from './backend/routes/presenceRoutes.ts';
 import { requireParticipantAuth } from './backend/middleware/authMiddleware.ts';
 import { errorHandler } from './backend/middleware/errorHandler.ts';
 import { runMigrations } from './database/migrator.ts';
@@ -174,6 +175,7 @@ async function startServer() {
   app.use('/api/team', teamRouter); // Alias for team API
   app.use('/api/challenges', challengeRouter);
   app.use('/api/anti-cheat', antiCheatRouter);
+  app.use('/api/presence', presenceRouter);
   app.use('/api/leaderboard', leaderboardRouter);
   app.use('/api/admin', adminRouter);
 
